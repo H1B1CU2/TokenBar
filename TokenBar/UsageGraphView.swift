@@ -1,0 +1,171 @@
+import SwiftUI
+
+struct UsageGraphView: View {
+    let history: [String: Double]
+    let tintColor: Color
+    let unitFormatter: (Double) -> String
+    let yAxisMax: Double
+    let showTotal: Bool
+    let firstDayOfWeek: FirstDayOfWeek
+    
+    @State private var hoveredIndex: Int? = nil
+    @State private var animate = false
+    
+    init(
+        history: [String: Double],
+        tintColor: Color,
+        unitFormatter: @escaping (Double) -> String,
+        yAxisMax: Double,
+        showTotal: Bool = true,
+        firstDayOfWeek: FirstDayOfWeek = .sunday
+    ) {
+        self.history = history
+        self.tintColor = tintColor
+        self.unitFormatter = unitFormatter
+        self.yAxisMax = yAxisMax
+        self.showTotal = showTotal
+        self.firstDayOfWeek = firstDayOfWeek
+    }
+    
+    private var last7DaysData: [(dateString: String, value: Double)] {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        // Find the start of the current week (Sunday or Monday)
+        let currentWeekday = calendar.component(.weekday, from: now)
+        let daysToSubtract: Int
+        switch firstDayOfWeek {
+        case .sunday:
+            daysToSubtract = currentWeekday - 1
+        case .monday:
+            daysToSubtract = (currentWeekday + 5) % 7
+        }
+        
+        guard let startOfWeek = calendar.date(byAdding: .day, value: -daysToSubtract, to: now) else { return [] }
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        return (0..<7).compactMap { dayOffset -> (String, Double)? in
+            guard let date = calendar.date(byAdding: .day, value: dayOffset, to: startOfWeek) else { return nil }
+            let key = formatter.string(from: date)
+            return (key, history[key] ?? 0.0)
+        }
+    }
+    
+    private var maxValue: Double {
+        let maxInHistory = last7DaysData.map { $0.value }.max() ?? 0.0
+        return max(yAxisMax, maxInHistory > 0 ? maxInHistory : yAxisMax)
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("7-Day Usage")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let hoveredIndex, hoveredIndex < last7DaysData.count {
+                    let item = last7DaysData[hoveredIndex]
+                    Text(unitFormatter(item.value))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(tintColor)
+                } else if showTotal {
+                    let total = last7DaysData.reduce(0) { $0 + $1.value }
+                    Text(unitFormatter(total))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            HStack(alignment: .bottom, spacing: 12) {
+                ForEach(0..<last7DaysData.count, id: \.self) { index in
+                    let item = last7DaysData[index]
+                    let fraction = maxValue > 0 ? (item.value / maxValue) : 0.0
+                    
+                    VStack(spacing: 4) {
+                        GeometryReader { geo in
+                            VStack(spacing: 0) {
+                                Spacer(minLength: 0)
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(tintColor)
+                                    .frame(width: 12)
+                                    .frame(height: animate ? CGFloat(fraction) * geo.size.height : 0)
+                                    .scaleEffect(hoveredIndex == index ? 1.08 : 1.0, anchor: .bottom)
+                                    .shadow(color: tintColor.opacity(hoveredIndex == index ? 0.3 : 0), radius: 3, x: 0, y: -1)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .frame(height: 50)
+                        
+                        Text(weekdayLabel(item.dateString))
+                            .font(.system(size: 9, weight: hoveredIndex == index ? .bold : .medium))
+                            .foregroundStyle(hoveredIndex == index ? tintColor : .secondary)
+                    }
+                    .frame(width: 24)
+                    .contentShape(Rectangle())
+                    .onHover { isHovering in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            hoveredIndex = isHovering ? index : nil
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 4)
+            .padding(.top, 10)
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.03))
+        .cornerRadius(8)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.6)) {
+                animate = true
+            }
+        }
+    }
+    
+    private func weekdayLabel(_ dateString: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: dateString) else { return "" }
+        
+        let calendar = Calendar.current
+        let weekdayNumber = calendar.component(.weekday, from: date)
+        
+        let isThai = Locale.current.identifier.hasPrefix("th")
+        
+        if isThai {
+            switch weekdayNumber {
+            case 1: return "อา."
+            case 2: return "จ."
+            case 3: return "อ."
+            case 4: return "พ."
+            case 5: return "พฤ."
+            case 6: return "ศ."
+            case 7: return "ส."
+            default: return ""
+            }
+        } else {
+            switch weekdayNumber {
+            case 1: return "Sun"
+            case 2: return "Mon"
+            case 3: return "Tue"
+            case 4: return "Wed"
+            case 5: return "Thu"
+            case 6: return "Fri"
+            case 7: return "Sat"
+            default: return ""
+            }
+        }
+    }
+    
+    private func formatDateLabel(_ dateString: String) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        guard let date = formatter.date(from: dateString) else { return dateString }
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateFormat = "MMM d"
+        return displayFormatter.string(from: date)
+    }
+}
