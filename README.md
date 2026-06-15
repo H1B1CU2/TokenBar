@@ -1,4 +1,4 @@
-# TokenBar 🪙
+# TokenBar
 
 TokenBar is a native macOS menu bar application designed to monitor your AI provider token usage, API balances, and remaining quotas in real-time. Keep track of your spending and limits for Claude, DeepSeek, and local language servers (Antigravity) directly from your menu bar.
 
