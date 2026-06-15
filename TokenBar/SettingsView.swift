@@ -235,11 +235,7 @@ struct SettingsView: View {
             
             if state.claudeEnabled {
                 Divider()
-                
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show in menu bar", isOn: $state.claudeInMenuBar)
-                        .font(.system(size: 12))
-                    
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Menu Bar Displays")
                             .font(.system(size: 11, weight: .medium))
@@ -309,8 +305,6 @@ struct SettingsView: View {
                 Divider()
                 
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show in menu bar", isOn: $state.deepseekInMenuBar)
-                        .font(.system(size: 12))
                     
                     Toggle("Show usage graph", isOn: $state.deepseekShowGraph)
                         .font(.system(size: 12))
@@ -379,11 +373,6 @@ struct SettingsView: View {
                 Divider()
                 
                 VStack(alignment: .leading, spacing: 10) {
-                    Toggle("Show Gemini Models (AGY) in menu bar", isOn: $state.antigravityGeminiInMenuBar)
-                        .font(.system(size: 12))
-                    
-                    Toggle("Show Claude & GPT Models (CG) in menu bar", isOn: $state.antigravityClaudeGptInMenuBar)
-                        .font(.system(size: 12))
                     
                     Toggle("Show usage graphs", isOn: $state.antigravityShowGraph)
                         .font(.system(size: 12))
@@ -734,7 +723,6 @@ extension View {
     private func applyClaudeObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
         self
             .onChange(of: state.claudeEnabled) { onLiveChange() }
-            .onChange(of: state.claudeInMenuBar) { onLiveChange() }
             .onChange(of: state.claudeWindow) { onLiveChange() }
             .onChange(of: state.claudeSideBySide) { onLiveChange() }
             .onChange(of: state.claudeShowGraph) { onLiveChange() }
@@ -743,7 +731,6 @@ extension View {
     private func applyDeepSeekObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
         self
             .onChange(of: state.deepseekEnabled) { onLiveChange() }
-            .onChange(of: state.deepseekInMenuBar) { onLiveChange() }
             .onChange(of: state.deepseekShowTHB) { onLiveChange() }
             .onChange(of: state.deepseekShowGraph) { onLiveChange() }
     }
@@ -751,8 +738,6 @@ extension View {
     private func applyAntigravityObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
         self
             .onChange(of: state.antigravityEnabled) { onLiveChange() }
-            .onChange(of: state.antigravityGeminiInMenuBar) { onLiveChange() }
-            .onChange(of: state.antigravityClaudeGptInMenuBar) { onLiveChange() }
             .onChange(of: state.antigravityFusedGraph) { onLiveChange() }
             .onChange(of: state.antigravitySideBySide) { onLiveChange() }
             .onChange(of: state.antigravityShowGraph) { onLiveChange() }

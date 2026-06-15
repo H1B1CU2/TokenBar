@@ -61,19 +61,7 @@ final class AppState {
         didSet { UserDefaults.standard.set(antigravityEnabled, forKey: "antigravityEnabled") }
     }
 
-    // Whether each provider's cell is drawn in the menu bar icon (independent of enabled)
-    var claudeInMenuBar: Bool {
-        didSet { UserDefaults.standard.set(claudeInMenuBar, forKey: "claudeInMenuBar") }
-    }
-    var deepseekInMenuBar: Bool {
-        didSet { UserDefaults.standard.set(deepseekInMenuBar, forKey: "deepseekInMenuBar") }
-    }
-    var antigravityGeminiInMenuBar: Bool {
-        didSet { UserDefaults.standard.set(antigravityGeminiInMenuBar, forKey: "antigravityGeminiInMenuBar") }
-    }
-    var antigravityClaudeGptInMenuBar: Bool {
-        didSet { UserDefaults.standard.set(antigravityClaudeGptInMenuBar, forKey: "antigravityClaudeGptInMenuBar") }
-    }
+
 
     // Combine the two Antigravity history graphs (Gemini + Claude/GPT) into one
     var antigravityFusedGraph: Bool {
@@ -217,10 +205,7 @@ final class AppState {
         self.claudeEnabled = defaults.object(forKey: "claudeEnabled") as? Bool ?? true
         self.deepseekEnabled = defaults.object(forKey: "deepseekEnabled") as? Bool ?? true
         self.antigravityEnabled = defaults.object(forKey: "antigravityEnabled") as? Bool ?? true
-        self.claudeInMenuBar = defaults.object(forKey: "claudeInMenuBar") as? Bool ?? true
-        self.deepseekInMenuBar = defaults.object(forKey: "deepseekInMenuBar") as? Bool ?? true
-        self.antigravityGeminiInMenuBar = defaults.object(forKey: "antigravityGeminiInMenuBar") as? Bool ?? true
-        self.antigravityClaudeGptInMenuBar = defaults.object(forKey: "antigravityClaudeGptInMenuBar") as? Bool ?? true
+
         self.antigravityFusedGraph = defaults.object(forKey: "antigravityFusedGraph") as? Bool ?? false
         self.antigravitySideBySide = defaults.object(forKey: "antigravitySideBySide") as? Bool ?? false
         self.claudeSideBySide = defaults.object(forKey: "claudeSideBySide") as? Bool ?? false
@@ -303,10 +288,10 @@ final class AppState {
     }
 
     // Whether each provider's cell should be drawn in the menu bar icon.
-    var claudeInBar: Bool { claudeEnabled && claudeInMenuBar }
-    var deepseekInBar: Bool { deepseekEnabled && deepseekInMenuBar }
-    var antigravityGeminiInBar: Bool { antigravityEnabled && antigravityGeminiInMenuBar }
-    var antigravityClaudeGptInBar: Bool { antigravityEnabled && antigravityClaudeGptInMenuBar }
+    var claudeInBar: Bool { claudeEnabled }
+    var deepseekInBar: Bool { deepseekEnabled }
+    var antigravityGeminiInBar: Bool { antigravityEnabled }
+    var antigravityClaudeGptInBar: Bool { antigravityEnabled }
     
     var antigravityGeminiFraction: Double {
         let lowestRemaining = min(antigravityGeminiWeeklyRemainingPercent,
