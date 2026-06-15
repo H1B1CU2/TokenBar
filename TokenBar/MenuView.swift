@@ -64,10 +64,8 @@ struct MenuView: View {
 
     private var claudeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Circle()
-                    .fill(Color.claudeAccent)
-                    .frame(width: 7, height: 7)
+            HStack(spacing: 8) {
+                ProviderIcon(provider: "claude", size: 18)
                 Text("Claude")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
@@ -174,10 +172,8 @@ struct MenuView: View {
 
     private var deepseekSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Circle()
-                    .fill(Color.deepseekAccent)
-                    .frame(width: 7, height: 7)
+            HStack(spacing: 8) {
+                ProviderIcon(provider: "deepseek", size: 18)
                 Text("DeepSeek")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
@@ -185,14 +181,6 @@ struct MenuView: View {
                     Text("No API key")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
-                } else if let balance = state.deepseekDisplayBalance {
-                    let suffix = state.showRemaining ? " remaining" : ""
-                    Text("\(balanceDisplay(balance, currency: state.deepseekDisplayCurrency))\(suffix)")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                } else {
-                    Text("—")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -214,10 +202,46 @@ struct MenuView: View {
                     firstDayOfWeek: state.firstDayOfWeek
                 )
                 .padding(.top, 4)
+
+                deepseekBalanceRow
+                    .padding(.top, 6)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    // Balance summary shown under the DeepSeek graph, mirroring the label/value
+    // layout of the Claude and Antigravity usage rows.
+    private var deepseekBalanceRow: some View {
+        Group {
+            if let balance = state.deepseekDisplayBalance {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Balance Left")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(balanceDisplay(balance, currency: state.deepseekDisplayCurrency))
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.03))
+                .cornerRadius(6)
+            } else {
+                HStack(spacing: 6) {
+                    Text("Balance")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("—")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
     }
 
     private var footerButtons: some View {
@@ -285,10 +309,8 @@ struct MenuView: View {
 
     private var antigravitySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Circle()
-                    .fill(Color.antigravityGreen)
-                    .frame(width: 7, height: 7)
+            HStack(spacing: 8) {
+                ProviderIcon(provider: "antigravity", size: 18)
                 Text("Antigravity")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()

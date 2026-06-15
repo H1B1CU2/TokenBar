@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WidgetKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -9,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var popover: NSPopover!
     private var settingsWindow: NSWindow?
     private var pollTimer: Timer?
+    private var reducingTimer: Timer?
     private var clickMonitor: Any?
     var state: AppState!
 
@@ -254,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         if deepseekOn {
             if let ds = deepseek {
-                state.deepseekBalance = ds.totalBalance
+                state.deepseekBalance = ds.balance
                 state.deepseekCurrency = ds.currency
             } else if !state.deepseekApiKey.isEmpty {
                 state.deepseekError = "Failed to fetch balance"
@@ -295,22 +297,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         // Update 7-day usage tracking
-        state.trackUsageUpdate(
+        let reduced = state.trackUsageUpdate(
             claudeSession: state.claudeAvailable ? state.claudeSessionPercent : nil,
             deepseekBalance: state.deepseekEnabled && state.deepseekError == nil ? state.deepseekBalance : nil,
             geminiWeeklyRemaining: state.antigravityAvailable ? state.antigravityGeminiWeeklyRemainingPercent : nil,
             claudeGptWeeklyRemaining: state.antigravityAvailable ? state.antigravityClaudeGptWeeklyRemainingPercent : nil
         )
 
+        if reduced && state.showReductionIndicator {
+            state.isReducing = true
+            reducingTimer?.invalidate()
+            reducingTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+                Task { @MainActor in
+                    self?.state.isReducing = false
+                    self?.renderIcon()
+                }
+            }
+        }
+
         state.isLoading = false
         state.lastRefreshed = Date()
         renderIcon()
+        writeWidgetData()
     }
 
     // Redraws the menu bar icon from current state (no network) — used for instant
     // feedback the moment a setting changes.
     private func renderIcon() {
-        statusItem.button?.image = IconRenderer.render(
+        let image = IconRenderer.render(
             claudeFraction: state.claudeFraction,
             claudeEnabled: state.claudeInBar,
             deepseekBalance: state.deepseekDisplayBalance,
@@ -320,8 +334,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             antigravityGeminiEnabled: state.antigravityGeminiInBar,
             antigravityClaudeGptFraction: state.antigravityClaudeGptFraction,
             antigravityClaudeGptEnabled: state.antigravityClaudeGptInBar,
-            providerOrder: state.providerOrder
+            providerOrder: state.providerOrder,
+            isReducing: state.isReducing && state.showReductionIndicator
         )
+        statusItem.button?.image = image
     }
 
     // Folds a Claude scan result into state. Transient failures (429/5xx/network)
@@ -354,6 +370,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             state.clearPersistedClaudeUsage()
             claudeBackoffUntil = nil
             claudeRateLimitStreak = 0
+        }
+    }
+
+    // MARK: - Widget Data Sync
+
+    private struct WidgetData: Codable {
+        var claudeEnabled: Bool
+        var claudeSessionPercent: Double
+        var claudeWeekPercent: Double
+        var claudeWindow: String
+        
+        var deepseekEnabled: Bool
+        var deepseekDisplayBalance: Double?
+        var deepseekDisplayCurrency: String
+        
+        var antigravityEnabled: Bool
+        var antigravityGemini5hPercent: Double
+        var antigravityGeminiWeeklyPercent: Double
+        var antigravityClaudeGpt5hPercent: Double
+        var antigravityClaudeGptWeeklyPercent: Double
+        
+        var showRemaining: Bool
+        var lastUpdated: Date
+    }
+
+    private func getWidgetDataURL() -> URL? {
+        let homeDir = FileManager.default.homeDirectoryForCurrentUser
+        let widgetDocDir = homeDir.appendingPathComponent("Library/Containers/com.tokenbar.app.TokenBarWidget/Data/Documents")
+        try? FileManager.default.createDirectory(at: widgetDocDir, withIntermediateDirectories: true)
+        return widgetDocDir.appendingPathComponent("widget_data.json")
+    }
+
+    private func writeWidgetData() {
+        let data = WidgetData(
+            claudeEnabled: state.claudeEnabled,
+            claudeSessionPercent: state.claudeSessionPercent,
+            claudeWeekPercent: state.claudeWeekPercent,
+            claudeWindow: state.claudeWindow.rawValue,
+            deepseekEnabled: state.deepseekEnabled,
+            deepseekDisplayBalance: state.deepseekDisplayBalance,
+            deepseekDisplayCurrency: state.deepseekDisplayCurrency,
+            antigravityEnabled: state.antigravityEnabled,
+            antigravityGemini5hPercent: state.antigravityGemini5hRemainingPercent,
+            antigravityGeminiWeeklyPercent: state.antigravityGeminiWeeklyRemainingPercent,
+            antigravityClaudeGpt5hPercent: state.antigravityClaudeGpt5hRemainingPercent,
+            antigravityClaudeGptWeeklyPercent: state.antigravityClaudeGptWeeklyRemainingPercent,
+            showRemaining: state.showRemaining,
+            lastUpdated: Date()
+        )
+        
+        guard let url = getWidgetDataURL() else { return }
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let encoded = try encoder.encode(data)
+            try encoded.write(to: url, options: .atomic)
+            WidgetCenter.shared.reloadAllTimelines()
+        } catch {
+            print("Failed to write widget data: \(error)")
         }
     }
 }

@@ -90,6 +90,11 @@ final class AppState {
         didSet { UserDefaults.standard.set(showRemaining, forKey: "showRemaining") }
     }
 
+    // Whether to show the reduction indicator dot on the brain icon when tokens are consumed
+    var showReductionIndicator: Bool {
+        didSet { UserDefaults.standard.set(showReductionIndicator, forKey: "showReductionIndicator") }
+    }
+
     // Whether to use highest token for each provider as the max height reference separately
     var useSeparateGraphScale: Bool {
         didSet { UserDefaults.standard.set(useSeparateGraphScale, forKey: "useSeparateGraphScale") }
@@ -142,6 +147,7 @@ final class AppState {
     }
 
     var isLoading: Bool = false
+    var isReducing: Bool = false
     var lastRefreshed: Date? = nil
     var claudeError: String? = nil
     var deepseekError: String? = nil
@@ -198,6 +204,7 @@ final class AppState {
         let win = defaults.string(forKey: "claudeWindow")
         self.claudeWindow = win.flatMap(ClaudeWindow.init(rawValue:)) ?? .session
         self.showRemaining = defaults.bool(forKey: "showRemaining")
+        self.showReductionIndicator = defaults.object(forKey: "showReductionIndicator") as? Bool ?? true
         self.useSeparateGraphScale = defaults.bool(forKey: "useSeparateGraphScale")
         self.refreshInterval = (defaults.object(forKey: "refreshInterval") as? Int)
             .flatMap(RefreshInterval.init(rawValue:)) ?? .m1
@@ -383,7 +390,8 @@ final class AppState {
         deepseekBalance: Double?,
         geminiWeeklyRemaining: Double?,
         claudeGptWeeklyRemaining: Double?
-    ) {
+    ) -> Bool {
+        var reduced = false
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         let todayKey = formatter.string(from: Date())
@@ -400,6 +408,7 @@ final class AppState {
                 if claudeSession > last {
                     let delta = claudeSession - last
                     claudeHistory[todayKey] = (claudeHistory[todayKey] ?? 0.0) + delta
+                    reduced = true
                 }
             }
             lastClaudeSessionPercent = claudeSession
@@ -411,6 +420,7 @@ final class AppState {
                 if deepseekBalance < last {
                     let delta = last - deepseekBalance
                     deepseekHistory[todayKey] = (deepseekHistory[todayKey] ?? 0.0) + delta
+                    reduced = true
                 }
             }
             lastDeepseekBalance = deepseekBalance
@@ -422,6 +432,7 @@ final class AppState {
                 if geminiWeeklyRemaining < last {
                     let delta = last - geminiWeeklyRemaining
                     antigravityGeminiHistory[todayKey] = (antigravityGeminiHistory[todayKey] ?? 0.0) + delta
+                    reduced = true
                 }
             }
             lastAntigravityGeminiWeeklyRemaining = geminiWeeklyRemaining
@@ -433,11 +444,13 @@ final class AppState {
                 if claudeGptWeeklyRemaining < last {
                     let delta = last - claudeGptWeeklyRemaining
                     antigravityClaudeGptHistory[todayKey] = (antigravityClaudeGptHistory[todayKey] ?? 0.0) + delta
+                    reduced = true
                 }
             }
             lastAntigravityClaudeGptWeeklyRemaining = claudeGptWeeklyRemaining
         }
         
         pruneHistory()
+        return reduced
     }
 }

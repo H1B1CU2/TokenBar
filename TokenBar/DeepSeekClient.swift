@@ -3,7 +3,7 @@ import Foundation
 struct DeepSeekBalance {
     let totalBalance: Double
     let grantedBalance: Double
-    let toppedUpBalance: Double
+    let balance: Double
     let currency: String
     let isAvailable: Bool
 }
@@ -34,7 +34,7 @@ enum DeepSeekClient {
         return DeepSeekBalance(
             totalBalance: total,
             grantedBalance: granted,
-            toppedUpBalance: toppedUp,
+            balance: toppedUp,
             currency: currency,
             isAvailable: available
         )
