@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import WidgetKit
+
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -318,7 +318,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         state.isLoading = false
         state.lastRefreshed = Date()
         renderIcon()
-        writeWidgetData()
     }
 
     // Redraws the menu bar icon from current state (no network) — used for instant
@@ -373,62 +372,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    // MARK: - Widget Data Sync
-
-    private struct WidgetData: Codable {
-        var claudeEnabled: Bool
-        var claudeSessionPercent: Double
-        var claudeWeekPercent: Double
-        var claudeWindow: String
-        
-        var deepseekEnabled: Bool
-        var deepseekDisplayBalance: Double?
-        var deepseekDisplayCurrency: String
-        
-        var antigravityEnabled: Bool
-        var antigravityGemini5hPercent: Double
-        var antigravityGeminiWeeklyPercent: Double
-        var antigravityClaudeGpt5hPercent: Double
-        var antigravityClaudeGptWeeklyPercent: Double
-        
-        var showRemaining: Bool
-        var lastUpdated: Date
-    }
-
-    private func getWidgetDataURL() -> URL? {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let widgetDocDir = homeDir.appendingPathComponent("Library/Containers/com.tokenbar.app.TokenBarWidget/Data/Documents")
-        try? FileManager.default.createDirectory(at: widgetDocDir, withIntermediateDirectories: true)
-        return widgetDocDir.appendingPathComponent("widget_data.json")
-    }
-
-    private func writeWidgetData() {
-        let data = WidgetData(
-            claudeEnabled: state.claudeEnabled,
-            claudeSessionPercent: state.claudeSessionPercent,
-            claudeWeekPercent: state.claudeWeekPercent,
-            claudeWindow: state.claudeWindow.rawValue,
-            deepseekEnabled: state.deepseekEnabled,
-            deepseekDisplayBalance: state.deepseekDisplayBalance,
-            deepseekDisplayCurrency: state.deepseekDisplayCurrency,
-            antigravityEnabled: state.antigravityEnabled,
-            antigravityGemini5hPercent: state.antigravityGemini5hRemainingPercent,
-            antigravityGeminiWeeklyPercent: state.antigravityGeminiWeeklyRemainingPercent,
-            antigravityClaudeGpt5hPercent: state.antigravityClaudeGpt5hRemainingPercent,
-            antigravityClaudeGptWeeklyPercent: state.antigravityClaudeGptWeeklyRemainingPercent,
-            showRemaining: state.showRemaining,
-            lastUpdated: Date()
-        )
-        
-        guard let url = getWidgetDataURL() else { return }
-        do {
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            let encoded = try encoder.encode(data)
-            try encoded.write(to: url, options: .atomic)
-            WidgetCenter.shared.reloadAllTimelines()
-        } catch {
-            print("Failed to write widget data: \(error)")
-        }
-    }
 }

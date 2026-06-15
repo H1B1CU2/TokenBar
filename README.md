@@ -12,18 +12,22 @@ TokenBar is a native macOS menu bar application designed to monitor your AI prov
 
 ### 📊 Multi-Provider Tracking
 - **Claude (Anthropic API):** Monitor official utilization session/weekly limits and view your active quota window directly in the menu bar.
-- **DeepSeek:** Track your platform API balance (USD/CNY). Supports live currency conversion to Thai Baht (฿) using reference rates from the European Central Bank (ECB).
+- **DeepSeek:** Track your platform API balance (USD/CNY) with a clean, centered metrics card layout. Supports live currency conversion to Thai Baht (฿) using reference rates from the European Central Bank (ECB) via the Frankfurter API.
 - **Antigravity:** Track local language server remaining quotas and reset times for Gemini, Claude, and GPT models.
+
+### 🗂️ Side-by-Side Multi-Column Layout
+- Toggle **Side-by-Side** views in Settings for both Claude and Antigravity sections to arrange Session and Weekly limits in parallel columns.
+- Maximizes vertical efficiency and presents your metrics side by side separated by clean vertical dividers.
 
 ### 📈 Interactive 7-Day Usage Graphs
 - Visualizes daily token consumption for each active provider.
-- Configurable **First Day of Week** (Sunday or Monday) to align with your preference.
-- Fused graphs option to combine multiple model usage tracks into a single unified chart.
+- Configurable **First Day of Week** (Sunday or Monday) to align with your calendar.
+- Fused graphs option to combine multiple model usage tracks (e.g. Gemini and Claude/GPT in Antigravity) into a single unified chart.
 - Toggle between shared global graph scales or separate auto-scaled peaks.
 
 ### ⚙️ Customizable Settings
 - **Remaining Mode:** Toggle globally to show remaining quotas/balances instead of used values.
-- **Provider Ordering:** Easily drag or move providers to customize the order in which they appear.
+- **Provider Ordering:** Easily drag or move providers to customize the order in which they appear in the menu list.
 - **Polling Intervals:** Configure automatic background refresh intervals (30s, 1m, 2m, or 5m).
 
 ### 🔒 Secure Credentials
@@ -64,7 +68,7 @@ TokenBar is a native macOS menu bar application designed to monitor your AI prov
 TokenBar reads your official Claude usage via your Claude Code access token, which is automatically resolved from your secure Keychain or credentials file.
 
 ### DeepSeek Integration
-Enter your DeepSeek API key (`sk-...`) in the **DeepSeek** tab within settings. The balance can optionally be converted to Thai Baht (฿) using live conversion rates from the Frankfurter API.
+Enter your DeepSeek API key (`sk-...`) in the **DeepSeek** tab within settings. The balance can optionally be converted to Thai Baht (฿) using live conversion rates.
 
 ### Antigravity Integration
 Connects to your local Antigravity Language Server instance (listening on default local ports) to query Gemini and Claude/GPT model session & weekly limits.

@@ -71,26 +71,41 @@ struct MenuView: View {
                 Spacer()
             }
 
-            claudeWindowRow("Session",
-                            percent: state.claudeSessionPercent,
-                            reset: state.claudeSessionResetAt)
-            claudeWindowRow("Week",
-                            percent: state.claudeWeekPercent,
-                            reset: state.claudeWeekResetAt)
+            if state.claudeSideBySide {
+                HStack(alignment: .top, spacing: 12) {
+                    claudeWindowRow("Session",
+                                    percent: state.claudeSessionPercent,
+                                    reset: state.claudeSessionResetAt)
+                    Divider()
+                    claudeWindowRow("Week",
+                                    percent: state.claudeWeekPercent,
+                                    reset: state.claudeWeekResetAt)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                claudeWindowRow("Session",
+                                percent: state.claudeSessionPercent,
+                                reset: state.claudeSessionResetAt)
+                claudeWindowRow("Week",
+                                percent: state.claudeWeekPercent,
+                                reset: state.claudeWeekResetAt)
+            }
 
             if let err = state.claudeError {
                 Text(err).font(.system(size: 10)).foregroundStyle(Color.claudeAccent)
             }
 
-            UsageGraphView(
-                history: state.claudeHistory.mapValues { $0 * 2000.0 },
-                tintColor: .claudeAccent,
-                unitFormatter: { formatTokens($0) },
-                yAxisMax: state.useSeparateGraphScale ? claudeTokenMax : globalTokenMax,
-                showTotal: true,
-                firstDayOfWeek: state.firstDayOfWeek
-            )
-            .padding(.top, 4)
+            if state.claudeShowGraph {
+                UsageGraphView(
+                    history: state.claudeHistory.mapValues { $0 * 2000.0 },
+                    tintColor: .claudeAccent,
+                    unitFormatter: { formatTokens($0) },
+                    yAxisMax: state.useSeparateGraphScale ? claudeTokenMax : globalTokenMax,
+                    showTotal: true,
+                    firstDayOfWeek: state.firstDayOfWeek
+                )
+                .padding(.top, 4)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -101,7 +116,7 @@ struct MenuView: View {
         let fraction = min(1.0, max(0, percent / 100))
         let displayFraction = state.showRemaining ? (1.0 - fraction) : fraction
         let displayPercent = state.showRemaining ? (100.0 - percent) : percent
-        let suffix = state.showRemaining ? "remaining" : "used"
+        let suffix = state.showRemaining ? "left" : "used"
         return VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 10, weight: .medium))
@@ -110,11 +125,13 @@ struct MenuView: View {
             HStack(spacing: 6) {
                 Text("\(percentText(displayPercent)) \(suffix)")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .layoutPriority(1)
                 Spacer()
-                if let resetStr = resetText(reset) {
+                if let resetStr = resetText(reset, compact: state.claudeSideBySide) {
                     Text(resetStr)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
@@ -140,6 +157,10 @@ struct MenuView: View {
     // Reset line: under 24h shows time left ("resets in 3 hr 44 min"); otherwise the
     // absolute weekday + time ("resets 01:00 on Monday"). No comma between units.
     private func resetText(_ reset: Date?) -> String? {
+        resetText(reset, compact: false)
+    }
+
+    private func resetText(_ reset: Date?, compact: Bool) -> String? {
         guard let reset else { return nil }
         let secs = reset.timeIntervalSinceNow
         if secs <= 0 { return nil }
@@ -147,12 +168,22 @@ struct MenuView: View {
             let totalMin = max(1, Int((secs / 60).rounded()))
             let h = totalMin / 60
             let m = totalMin % 60
-            let left = h > 0 ? (m > 0 ? "\(h) hr \(m) min" : "\(h) hr") : "\(m) min"
-            return "resets in \(left)"
+            if compact {
+                let left = h > 0 ? (m > 0 ? "\(h)h \(m)m" : "\(h)h") : "\(m)m"
+                return "in \(left)"
+            } else {
+                let left = h > 0 ? (m > 0 ? "\(h) hr \(m) min" : "\(h) hr") : "\(m) min"
+                return "resets in \(left)"
+            }
         }
         let time = reset.formatted(.dateTime.hour().minute())
-        let day  = reset.formatted(.dateTime.weekday(.wide))
-        return "resets \(time) on \(day)"
+        if compact {
+            let day  = reset.formatted(.dateTime.weekday(.abbreviated))
+            return "\(day) \(time)"
+        } else {
+            let day  = reset.formatted(.dateTime.weekday(.wide))
+            return "resets \(time) on \(day)"
+        }
     }
 
     // Custom progress bar drawn with explicit shape fills. A SwiftUI ProgressView's
@@ -189,19 +220,21 @@ struct MenuView: View {
             }
 
             if !state.deepseekApiKey.isEmpty {
-                UsageGraphView(
-                    history: state.deepseekHistory.mapValues { $0 * 2_000_000.0 },
-                    tintColor: .deepseekAccent,
-                    unitFormatter: { tokens in
-                        let usd = tokens / 2_000_000.0
-                        let money = state.deepseekThbActive ? usd * state.deepseekThbRate : usd
-                        let moneyStr = balanceDisplay(money, currency: state.deepseekDisplayCurrency)
-                        return "\(formatTokens(tokens)) (\(moneyStr))"
-                    },
-                    yAxisMax: state.useSeparateGraphScale ? deepseekTokenMax : globalTokenMax,
-                    firstDayOfWeek: state.firstDayOfWeek
-                )
-                .padding(.top, 4)
+                if state.deepseekShowGraph {
+                    UsageGraphView(
+                        history: state.deepseekHistory.mapValues { $0 * 2_000_000.0 },
+                        tintColor: .deepseekAccent,
+                        unitFormatter: { tokens in
+                            let usd = tokens / 2_000_000.0
+                            let money = state.deepseekThbActive ? usd * state.deepseekThbRate : usd
+                            let moneyStr = balanceDisplay(money, currency: state.deepseekDisplayCurrency)
+                            return "\(formatTokens(tokens)) (\(moneyStr))"
+                        },
+                        yAxisMax: state.useSeparateGraphScale ? deepseekTokenMax : globalTokenMax,
+                        firstDayOfWeek: state.firstDayOfWeek
+                    )
+                    .padding(.top, 4)
+                }
 
                 deepseekBalanceRow
                     .padding(.top, 6)
@@ -315,35 +348,67 @@ struct MenuView: View {
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
             }
-
             if state.antigravityAvailable {
-                VStack(alignment: .leading, spacing: 12) {
-                    // Group 1: Gemini Models
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Gemini Models")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.primary)
-                        antigravityModelRow("Session",
-                                            percent: state.antigravityGemini5hRemainingPercent,
-                                            reset: state.antigravityGemini5hResetAt)
-                        antigravityModelRow("Week",
-                                            percent: state.antigravityGeminiWeeklyRemainingPercent,
-                                            reset: state.antigravityGeminiWeeklyResetAt)
+                if state.antigravitySideBySide {
+                    HStack(alignment: .top, spacing: 12) {
+                        // Group 1: Gemini Models
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Gemini Models")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.primary)
+                            antigravityModelRow("Session",
+                                                 percent: state.antigravityGemini5hRemainingPercent,
+                                                 reset: state.antigravityGemini5hResetAt)
+                            antigravityModelRow("Week",
+                                                 percent: state.antigravityGeminiWeeklyRemainingPercent,
+                                                 reset: state.antigravityGeminiWeeklyResetAt)
+                        }
+                        
+                        Divider()
+                        
+                        // Group 2: Claude & GPT Models
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Claude & GPT Models")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.primary)
+                            antigravityModelRow("Session",
+                                                 percent: state.antigravityClaudeGpt5hRemainingPercent,
+                                                 reset: state.antigravityClaudeGpt5hResetAt)
+                            antigravityModelRow("Week",
+                                                 percent: state.antigravityClaudeGptWeeklyRemainingPercent,
+                                                 reset: state.antigravityClaudeGptWeeklyResetAt)
+                        }
                     }
-                    
-                    Divider()
-                    
-                    // Group 2: Claude & GPT Models
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Claude & GPT Models")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.primary)
-                        antigravityModelRow("Session",
-                                            percent: state.antigravityClaudeGpt5hRemainingPercent,
-                                            reset: state.antigravityClaudeGpt5hResetAt)
-                        antigravityModelRow("Week",
-                                            percent: state.antigravityClaudeGptWeeklyRemainingPercent,
-                                            reset: state.antigravityGeminiWeeklyResetAt)
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Group 1: Gemini Models
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Gemini Models")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.primary)
+                            antigravityModelRow("Session",
+                                                 percent: state.antigravityGemini5hRemainingPercent,
+                                                 reset: state.antigravityGemini5hResetAt)
+                            antigravityModelRow("Week",
+                                                 percent: state.antigravityGeminiWeeklyRemainingPercent,
+                                                 reset: state.antigravityGeminiWeeklyResetAt)
+                        }
+                        
+                        Divider()
+                        
+                        // Group 2: Claude & GPT Models
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Claude & GPT Models")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.primary)
+                            antigravityModelRow("Session",
+                                                 percent: state.antigravityClaudeGpt5hRemainingPercent,
+                                                 reset: state.antigravityClaudeGpt5hResetAt)
+                            antigravityModelRow("Week",
+                                                 percent: state.antigravityClaudeGptWeeklyRemainingPercent,
+                                                 reset: state.antigravityClaudeGptWeeklyResetAt)
+                        }
                     }
                 }
             } else if let err = state.antigravityError {
@@ -355,47 +420,49 @@ struct MenuView: View {
             }
 
             if state.antigravityAvailable {
-                if state.antigravityFusedGraph {
-                    UsageGraphView(
-                        history: antigravityFusedHistory,
-                        tintColor: .antigravityGreen,
-                        unitFormatter: { formatTokens($0) },
-                        yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
-                        showTotal: true,
-                        firstDayOfWeek: state.firstDayOfWeek
-                    )
-                    .padding(.top, 4)
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Gemini Models")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(.secondary)
-                            UsageGraphView(
-                                history: state.antigravityGeminiHistory.mapValues { $0 * 1000.0 },
-                                tintColor: .antigravityGreen,
-                                unitFormatter: { formatTokens($0) },
-                                yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
-                                showTotal: true,
-                                firstDayOfWeek: state.firstDayOfWeek
-                            )
-                        }
+                if state.antigravityShowGraph {
+                    if state.antigravityFusedGraph {
+                        UsageGraphView(
+                            history: antigravityFusedHistory,
+                            tintColor: .antigravityGreen,
+                            unitFormatter: { formatTokens($0) },
+                            yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
+                            showTotal: true,
+                            firstDayOfWeek: state.firstDayOfWeek
+                        )
+                        .padding(.top, 4)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Gemini Models")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                UsageGraphView(
+                                    history: state.antigravityGeminiHistory.mapValues { $0 * 1000.0 },
+                                    tintColor: .antigravityGreen,
+                                    unitFormatter: { formatTokens($0) },
+                                    yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
+                                    showTotal: true,
+                                    firstDayOfWeek: state.firstDayOfWeek
+                                )
+                            }
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Claude & GPT")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(.secondary)
-                            UsageGraphView(
-                                history: state.antigravityClaudeGptHistory.mapValues { $0 * 1000.0 },
-                                tintColor: .antigravityGreen,
-                                unitFormatter: { formatTokens($0) },
-                                yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
-                                showTotal: true,
-                                firstDayOfWeek: state.firstDayOfWeek
-                            )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Claude & GPT")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                UsageGraphView(
+                                    history: state.antigravityClaudeGptHistory.mapValues { $0 * 1000.0 },
+                                    tintColor: .antigravityGreen,
+                                    unitFormatter: { formatTokens($0) },
+                                    yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
+                                    showTotal: true,
+                                    firstDayOfWeek: state.firstDayOfWeek
+                                )
+                            }
                         }
+                        .padding(.top, 4)
                     }
-                    .padding(.top, 4)
                 }
             }
         }
@@ -407,7 +474,7 @@ struct MenuView: View {
         let fraction = min(1.0, max(0.0, percent / 100.0))
         let displayFraction = state.showRemaining ? fraction : (1.0 - fraction)
         let displayPercent = state.showRemaining ? percent : (100.0 - percent)
-        let suffix = state.showRemaining ? "remaining" : "used"
+        let suffix = state.showRemaining ? "left" : "used"
 
         return VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -417,11 +484,13 @@ struct MenuView: View {
             HStack(spacing: 6) {
                 Text("\(percentText(displayPercent)) \(suffix)")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .layoutPriority(1)
                 Spacer()
-                if let resetStr = resetText(reset) {
+                if let resetStr = resetText(reset, compact: state.antigravitySideBySide) {
                     Text(resetStr)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }

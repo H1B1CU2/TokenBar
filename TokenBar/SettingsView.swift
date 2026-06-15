@@ -4,7 +4,6 @@ import AppKit
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
     case providers
-    case widget
     
     var id: String { rawValue }
     
@@ -12,7 +11,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .providers: return "Providers"
-        case .widget: return "Widget"
         }
     }
     
@@ -20,7 +18,6 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape"
         case .providers: return "cpu"
-        case .widget: return "square.grid.2x2"
         }
     }
 }
@@ -60,23 +57,7 @@ struct SettingsView: View {
             .background(Color(NSColor.controlBackgroundColor))
         }
         .frame(width: 580, height: 420)
-        // Live-apply: any change redraws the menu bar icon immediately (and refetches).
-        .onChange(of: state.claudeEnabled) { onLiveChange() }
-        .onChange(of: state.deepseekEnabled) { onLiveChange() }
-        .onChange(of: state.antigravityEnabled) { onLiveChange() }
-        .onChange(of: state.claudeInMenuBar) { onLiveChange() }
-        .onChange(of: state.deepseekInMenuBar) { onLiveChange() }
-        .onChange(of: state.antigravityGeminiInMenuBar) { onLiveChange() }
-        .onChange(of: state.antigravityClaudeGptInMenuBar) { onLiveChange() }
-        .onChange(of: state.antigravityFusedGraph) { onLiveChange() }
-        .onChange(of: state.claudeWindow) { onLiveChange() }
-        .onChange(of: state.showRemaining) { onLiveChange() }
-        .onChange(of: state.showReductionIndicator) { onLiveChange() }
-        .onChange(of: state.useSeparateGraphScale) { onLiveChange() }
-        .onChange(of: state.deepseekShowTHB) { onLiveChange() }
-        .onChange(of: state.providerOrder) { onLiveChange() }
-        .onChange(of: state.refreshInterval) { onLiveChange() }
-        .onChange(of: state.firstDayOfWeek) { onLiveChange() }
+        .applyLiveChangeObservers(state: state, onLiveChange: onLiveChange)
     }
     
     private func sidebarRow(for tab: SettingsTab) -> some View {
@@ -118,8 +99,6 @@ struct SettingsView: View {
             generalPane
         case .providers:
             providersPane
-        case .widget:
-            widgetPane
         }
     }
     
@@ -127,9 +106,9 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             Toggle(isOn: $state.showRemaining) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Remaining Mode")
+                    Text("Left Mode")
                         .font(.system(size: 13, weight: .medium))
-                    Text("Show remaining usage/quota instead of used.")
+                    Text("Show left usage/quota instead of used.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -274,6 +253,19 @@ struct SettingsView: View {
                         .labelsHidden()
                     }
                     
+                    Toggle(isOn: $state.claudeSideBySide) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Side-by-side usage bars")
+                                .font(.system(size: 12))
+                            Text("Display Session and Week usage bars in the same row but different columns.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    
+                    Toggle("Show usage graph", isOn: $state.claudeShowGraph)
+                        .font(.system(size: 12))
+                    
                     Text("Displays your official Claude usage via your Claude Code access token, which is automatically fetched from your secure keychain or credentials file.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -318,6 +310,9 @@ struct SettingsView: View {
                 
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Show in menu bar", isOn: $state.deepseekInMenuBar)
+                        .font(.system(size: 12))
+                    
+                    Toggle("Show usage graph", isOn: $state.deepseekShowGraph)
                         .font(.system(size: 12))
                     
                     VStack(alignment: .leading, spacing: 6) {
@@ -390,6 +385,9 @@ struct SettingsView: View {
                     Toggle("Show Claude & GPT Models (CG) in menu bar", isOn: $state.antigravityClaudeGptInMenuBar)
                         .font(.system(size: 12))
                     
+                    Toggle("Show usage graphs", isOn: $state.antigravityShowGraph)
+                        .font(.system(size: 12))
+                    
                     Toggle(isOn: $state.antigravityFusedGraph) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Combine usage graphs")
@@ -400,7 +398,17 @@ struct SettingsView: View {
                         }
                     }
                     
-                    Text("Monitors remaining model quota and automatic reset times by connecting to your local Antigravity Language Server instance.")
+                    Toggle(isOn: $state.antigravitySideBySide) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Side-by-side usage bars")
+                                .font(.system(size: 12))
+                            Text("Display Gemini and Claude/GPT usage bars in the same row but different columns.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    
+                    Text("Monitors left model quota and automatic reset times by connecting to your local Antigravity Language Server instance.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(nil)
@@ -419,54 +427,6 @@ struct SettingsView: View {
         )
     }
     
-    @ViewBuilder private var widgetPane: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("How to add the Widget to your Desktop")
-                .font(.system(size: 13, weight: .semibold))
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Label("1. Open the Widget Gallery", systemImage: "macwindow")
-                    .font(.system(size: 12, weight: .medium))
-                Text("Click the date/time in the top-right of your screen to open Notification Center, then click 'Edit Widgets' at the bottom.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 24)
-                
-                Label("2. Find TokenBar", systemImage: "magnifyingglass")
-                    .font(.system(size: 12, weight: .medium))
-                Text("Search for 'TokenBar' in the sidebar of the Widget Gallery.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 24)
-                
-                Label("3. Drag or Click to Add", systemImage: "hand.draw")
-                    .font(.system(size: 12, weight: .medium))
-                Text("Choose between Small or Medium size, and drag it onto your Desktop or Notification Center.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 24)
-            }
-            .padding(12)
-            .background(Color.primary.opacity(0.03))
-            .cornerRadius(8)
-            
-            Divider()
-            
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Widget Live Sync")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("The widget updates in real-time when the menu bar refreshes.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.title2)
-            }
-        }
-    }
     
     private func providerName(_ id: String) -> String {
         switch id {
@@ -761,3 +721,51 @@ struct ProviderIcon: View {
         }
     }
 }
+
+extension View {
+    func applyLiveChangeObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
+        self
+            .applyClaudeObservers(state: state, onLiveChange: onLiveChange)
+            .applyDeepSeekObservers(state: state, onLiveChange: onLiveChange)
+            .applyAntigravityObservers(state: state, onLiveChange: onLiveChange)
+            .applyGeneralObservers(state: state, onLiveChange: onLiveChange)
+    }
+
+    private func applyClaudeObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
+        self
+            .onChange(of: state.claudeEnabled) { onLiveChange() }
+            .onChange(of: state.claudeInMenuBar) { onLiveChange() }
+            .onChange(of: state.claudeWindow) { onLiveChange() }
+            .onChange(of: state.claudeSideBySide) { onLiveChange() }
+            .onChange(of: state.claudeShowGraph) { onLiveChange() }
+    }
+
+    private func applyDeepSeekObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
+        self
+            .onChange(of: state.deepseekEnabled) { onLiveChange() }
+            .onChange(of: state.deepseekInMenuBar) { onLiveChange() }
+            .onChange(of: state.deepseekShowTHB) { onLiveChange() }
+            .onChange(of: state.deepseekShowGraph) { onLiveChange() }
+    }
+
+    private func applyAntigravityObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
+        self
+            .onChange(of: state.antigravityEnabled) { onLiveChange() }
+            .onChange(of: state.antigravityGeminiInMenuBar) { onLiveChange() }
+            .onChange(of: state.antigravityClaudeGptInMenuBar) { onLiveChange() }
+            .onChange(of: state.antigravityFusedGraph) { onLiveChange() }
+            .onChange(of: state.antigravitySideBySide) { onLiveChange() }
+            .onChange(of: state.antigravityShowGraph) { onLiveChange() }
+    }
+
+    private func applyGeneralObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
+        self
+            .onChange(of: state.showRemaining) { onLiveChange() }
+            .onChange(of: state.showReductionIndicator) { onLiveChange() }
+            .onChange(of: state.useSeparateGraphScale) { onLiveChange() }
+            .onChange(of: state.providerOrder) { onLiveChange() }
+            .onChange(of: state.refreshInterval) { onLiveChange() }
+            .onChange(of: state.firstDayOfWeek) { onLiveChange() }
+    }
+}
+

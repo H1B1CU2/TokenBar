@@ -80,6 +80,27 @@ final class AppState {
         didSet { UserDefaults.standard.set(antigravityFusedGraph, forKey: "antigravityFusedGraph") }
     }
 
+    // Side-by-side layout for Antigravity Gemini and Claude & GPT usage rows
+    var antigravitySideBySide: Bool {
+        didSet { UserDefaults.standard.set(antigravitySideBySide, forKey: "antigravitySideBySide") }
+    }
+
+    // Side-by-side layout for Claude Session and Week usage rows
+    var claudeSideBySide: Bool {
+        didSet { UserDefaults.standard.set(claudeSideBySide, forKey: "claudeSideBySide") }
+    }
+
+    // Graph display toggles for each provider
+    var claudeShowGraph: Bool {
+        didSet { UserDefaults.standard.set(claudeShowGraph, forKey: "claudeShowGraph") }
+    }
+    var deepseekShowGraph: Bool {
+        didSet { UserDefaults.standard.set(deepseekShowGraph, forKey: "deepseekShowGraph") }
+    }
+    var antigravityShowGraph: Bool {
+        didSet { UserDefaults.standard.set(antigravityShowGraph, forKey: "antigravityShowGraph") }
+    }
+
     // Which window the menu bar donut reflects
     var claudeWindow: ClaudeWindow {
         didSet { UserDefaults.standard.set(claudeWindow.rawValue, forKey: "claudeWindow") }
@@ -201,6 +222,11 @@ final class AppState {
         self.antigravityGeminiInMenuBar = defaults.object(forKey: "antigravityGeminiInMenuBar") as? Bool ?? true
         self.antigravityClaudeGptInMenuBar = defaults.object(forKey: "antigravityClaudeGptInMenuBar") as? Bool ?? true
         self.antigravityFusedGraph = defaults.object(forKey: "antigravityFusedGraph") as? Bool ?? false
+        self.antigravitySideBySide = defaults.object(forKey: "antigravitySideBySide") as? Bool ?? false
+        self.claudeSideBySide = defaults.object(forKey: "claudeSideBySide") as? Bool ?? false
+        self.claudeShowGraph = defaults.object(forKey: "claudeShowGraph") as? Bool ?? true
+        self.deepseekShowGraph = defaults.object(forKey: "deepseekShowGraph") as? Bool ?? true
+        self.antigravityShowGraph = defaults.object(forKey: "antigravityShowGraph") as? Bool ?? true
         let win = defaults.string(forKey: "claudeWindow")
         self.claudeWindow = win.flatMap(ClaudeWindow.init(rawValue:)) ?? .session
         self.showRemaining = defaults.bool(forKey: "showRemaining")
