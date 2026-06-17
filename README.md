@@ -1,6 +1,6 @@
 # TokenBar
 
-TokenBar is a native macOS menu bar application designed to monitor your AI provider token usage, API balances, and remaining quotas in real-time. Keep track of your spending and limits for Claude, DeepSeek, and local language servers (Antigravity) directly from a clean dropdown popover, while keeping your menu bar sleek and clutter-free.
+TokenBar is a native macOS menu bar application designed to monitor your AI provider token usage, API balances, and remaining quotas in real-time. Keep track of your spending and limits for Claude, DeepSeek, and Antigravity directly from a clean dropdown popover, while keeping your menu bar sleek and clutter-free.
 
 <p align="center">
   <img src="assets/popover_screenshot.png" width="320" alt="TokenBar Popover Screenshot">
@@ -18,7 +18,7 @@ TokenBar is a native macOS menu bar application designed to monitor your AI prov
 ### 📊 Multi-Provider Popover Tracking
 - **Claude (Anthropic API):** Monitor official utilization session/weekly limits and view your active quota window in a beautifully designed metrics card.
 - **DeepSeek:** Track your platform API balance (USD/CNY) with a clean, centered metrics card layout. Supports live currency conversion to Thai Baht (฿) using reference rates from the European Central Bank (ECB) via the Frankfurter API.
-- **Antigravity:** Track local language server remaining quotas and reset times for Gemini, Claude, and GPT models.
+- **Antigravity:** Track remaining quotas and reset times for Gemini, Claude, and GPT models.
 
 ### 🗂️ Side-by-Side Multi-Column Layout
 - Toggle **Side-by-Side** views in Settings for both Claude and Antigravity sections to arrange Session and Weekly limits in parallel columns.
@@ -78,7 +78,7 @@ TokenBar reads your official Claude usage via your Claude Code access token, whi
 Enter your DeepSeek API key (`sk-...`) in the **DeepSeek** tab within settings. The balance can optionally be converted to Thai Baht (฿) using live conversion rates.
 
 ### Antigravity Integration
-Connects to your local Antigravity Language Server instance (listening on default local ports) to query Gemini and Claude/GPT model session & weekly limits.
+Connects to your local Antigravity instance (listening on default local ports) to query Gemini and Claude/GPT model session & weekly limits.
 
 ---
 
