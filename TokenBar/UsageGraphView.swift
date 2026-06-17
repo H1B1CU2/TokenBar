@@ -58,6 +58,12 @@ struct UsageGraphView: View {
         return max(yAxisMax, maxInHistory > 0 ? maxInHistory : yAxisMax)
     }
     
+    private var todayString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -82,6 +88,7 @@ struct UsageGraphView: View {
                 ForEach(0..<last7DaysData.count, id: \.self) { index in
                     let item = last7DaysData[index]
                     let fraction = maxValue > 0 ? (item.value / maxValue) : 0.0
+                    let isToday = item.dateString == todayString
                     
                     VStack(spacing: 4) {
                         GeometryReader { geo in
@@ -99,8 +106,8 @@ struct UsageGraphView: View {
                         .frame(height: 50)
                         
                         Text(weekdayLabel(item.dateString))
-                            .font(.system(size: 9, weight: hoveredIndex == index ? .bold : .medium))
-                            .foregroundStyle(hoveredIndex == index ? tintColor : .secondary)
+                            .font(.system(size: 9, weight: (hoveredIndex == index || isToday) ? .bold : .medium))
+                            .foregroundStyle(hoveredIndex == index ? tintColor : (isToday ? .primary : .secondary))
                     }
                     .frame(width: 24)
                     .contentShape(Rectangle())

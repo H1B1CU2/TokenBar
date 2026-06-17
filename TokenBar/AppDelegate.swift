@@ -324,16 +324,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // feedback the moment a setting changes.
     private func renderIcon() {
         let image = IconRenderer.render(
-            claudeFraction: state.claudeFraction,
-            claudeEnabled: state.claudeInBar,
-            deepseekBalance: state.deepseekDisplayBalance,
-            currency: state.deepseekDisplayCurrency,
-            deepseekEnabled: state.deepseekInBar,
-            antigravityGeminiFraction: state.antigravityGeminiFraction,
-            antigravityGeminiEnabled: state.antigravityGeminiInBar,
-            antigravityClaudeGptFraction: state.antigravityClaudeGptFraction,
-            antigravityClaudeGptEnabled: state.antigravityClaudeGptInBar,
-            providerOrder: state.providerOrder,
             isReducing: state.isReducing && state.showReductionIndicator
         )
         statusItem.button?.image = image

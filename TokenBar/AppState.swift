@@ -287,12 +287,7 @@ final class AppState {
         return showRemaining ? (1.0 - used) : used
     }
 
-    // Whether each provider's cell should be drawn in the menu bar icon.
-    var claudeInBar: Bool { claudeEnabled }
-    var deepseekInBar: Bool { deepseekEnabled }
-    var antigravityGeminiInBar: Bool { antigravityEnabled }
-    var antigravityClaudeGptInBar: Bool { antigravityEnabled }
-    
+
     var antigravityGeminiFraction: Double {
         let lowestRemaining = min(antigravityGeminiWeeklyRemainingPercent,
                                   antigravityGemini5hRemainingPercent)

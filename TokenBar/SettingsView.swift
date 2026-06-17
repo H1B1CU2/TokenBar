@@ -628,9 +628,16 @@ struct SVGPathShape: Shape {
                       let x = scanner.nextNumber(),
                       let y = scanner.nextNumber() {
                     let p = CGPoint(x: x, y: y)
-                    let absoluteP = cmd == "A" ? p : CGPoint(x: currentPoint.x + p.x, y: currentPoint.y + p.y)
-                    path.addLine(to: absoluteP)
-                    currentPoint = absoluteP
+                    let endPoint = cmd == "A" ? p : CGPoint(x: currentPoint.x + p.x, y: currentPoint.y + p.y)
+                    Self.addArc(to: &path,
+                                from: currentPoint,
+                                to: endPoint,
+                                rx: rx,
+                                ry: ry,
+                                xAxisRotation: xAxisRotation,
+                                largeArc: largeArcFlag != 0,
+                                sweep: sweepFlag != 0)
+                    currentPoint = endPoint
                 }
             case "Z", "z":
                 path.closeSubpath()
@@ -639,6 +646,111 @@ struct SVGPathShape: Shape {
             }
         }
         return path
+    }
+
+    /// Appends an SVG elliptical arc to `path`, approximating it with cubic Bézier
+    /// segments. Implements the endpoint-to-center conversion from the SVG spec
+    /// (Appendix F.6) so that `rx`, `ry`, `xAxisRotation`, `largeArc`, and `sweep`
+    /// all affect the rendered curve.
+    private static func addArc(to path: inout Path,
+                               from start: CGPoint,
+                               to end: CGPoint,
+                               rx: CGFloat,
+                               ry: CGFloat,
+                               xAxisRotation: CGFloat,
+                               largeArc: Bool,
+                               sweep: Bool) {
+        // Coincident endpoints: nothing to draw (per spec F.6.2).
+        guard start != end else { return }
+
+        var rx = abs(rx)
+        var ry = abs(ry)
+
+        // A zero radius degenerates to a straight line (per spec F.6.2).
+        guard rx != 0, ry != 0 else {
+            path.addLine(to: end)
+            return
+        }
+
+        let phi = xAxisRotation * .pi / 180
+        let cosPhi = cos(phi)
+        let sinPhi = sin(phi)
+
+        // Step 1: midpoint in the rotated coordinate system.
+        let dx = (start.x - end.x) / 2
+        let dy = (start.y - end.y) / 2
+        let x1 =  cosPhi * dx + sinPhi * dy
+        let y1 = -sinPhi * dx + cosPhi * dy
+
+        // Scale up radii that are too small to span the endpoints (per spec F.6.6).
+        let lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry)
+        if lambda > 1 {
+            let scale = sqrt(lambda)
+            rx *= scale
+            ry *= scale
+        }
+
+        // Step 2: center in the rotated coordinate system.
+        let rxSq = rx * rx
+        let rySq = ry * ry
+        let numerator = max(0, rxSq * rySq - rxSq * y1 * y1 - rySq * x1 * x1)
+        let denominator = rxSq * y1 * y1 + rySq * x1 * x1
+        var coef = denominator == 0 ? 0 : sqrt(numerator / denominator)
+        if largeArc == sweep { coef = -coef }
+        let cx1 =  coef * rx * y1 / ry
+        let cy1 = -coef * ry * x1 / rx
+
+        // Step 3: center in the original coordinate system.
+        let cx = cosPhi * cx1 - sinPhi * cy1 + (start.x + end.x) / 2
+        let cy = sinPhi * cx1 + cosPhi * cy1 + (start.y + end.y) / 2
+
+        // Step 4: start angle and sweep angle.
+        func angle(_ ux: CGFloat, _ uy: CGFloat, _ vx: CGFloat, _ vy: CGFloat) -> CGFloat {
+            let dot = ux * vx + uy * vy
+            let len = sqrt((ux * ux + uy * uy) * (vx * vx + vy * vy))
+            var a = acos(max(-1, min(1, len == 0 ? 1 : dot / len)))
+            if ux * vy - uy * vx < 0 { a = -a }
+            return a
+        }
+        let theta1 = angle(1, 0, (x1 - cx1) / rx, (y1 - cy1) / ry)
+        var sweepAngle = angle((x1 - cx1) / rx, (y1 - cy1) / ry,
+                               (-x1 - cx1) / rx, (-y1 - cy1) / ry)
+        if !sweep, sweepAngle > 0 {
+            sweepAngle -= 2 * .pi
+        } else if sweep, sweepAngle < 0 {
+            sweepAngle += 2 * .pi
+        }
+
+        // Approximate with one cubic Bézier per <= 90° segment.
+        let segments = max(1, Int(ceil(abs(sweepAngle) / (.pi / 2))))
+        let delta = sweepAngle / CGFloat(segments)
+        let t = 4.0 / 3.0 * tan(delta / 4)
+
+        func point(_ angle: CGFloat) -> CGPoint {
+            let ex = rx * cos(angle)
+            let ey = ry * sin(angle)
+            return CGPoint(x: cosPhi * ex - sinPhi * ey + cx,
+                           y: sinPhi * ex + cosPhi * ey + cy)
+        }
+        func tangent(_ angle: CGFloat) -> CGVector {
+            let ex = -rx * sin(angle)
+            let ey =  ry * cos(angle)
+            return CGVector(dx: cosPhi * ex - sinPhi * ey,
+                            dy: sinPhi * ex + cosPhi * ey)
+        }
+
+        var theta = theta1
+        for _ in 0..<segments {
+            let nextTheta = theta + delta
+            let p1 = point(theta)
+            let p2 = point(nextTheta)
+            let d1 = tangent(theta)
+            let d2 = tangent(nextTheta)
+            let control1 = CGPoint(x: p1.x + t * d1.dx, y: p1.y + t * d1.dy)
+            let control2 = CGPoint(x: p2.x - t * d2.dx, y: p2.y - t * d2.dy)
+            path.addCurve(to: p2, control1: control1, control2: control2)
+            theta = nextTheta
+        }
     }
 }
 

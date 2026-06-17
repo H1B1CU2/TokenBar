@@ -1,6 +1,6 @@
 # TokenBar
 
-TokenBar is a native macOS menu bar application designed to monitor your AI provider token usage, API balances, and remaining quotas in real-time. Keep track of your spending and limits for Claude, DeepSeek, and local language servers (Antigravity) directly from your menu bar.
+TokenBar is a native macOS menu bar application designed to monitor your AI provider token usage, API balances, and remaining quotas in real-time. Keep track of your spending and limits for Claude, DeepSeek, and local language servers (Antigravity) directly from a clean dropdown popover, while keeping your menu bar sleek and clutter-free.
 
 <p align="center">
   <img src="assets/popover_screenshot.png" width="320" alt="TokenBar Popover Screenshot">
@@ -10,17 +10,23 @@ TokenBar is a native macOS menu bar application designed to monitor your AI prov
 
 ## Features
 
-### 📊 Multi-Provider Tracking
-- **Claude (Anthropic API):** Monitor official utilization session/weekly limits and view your active quota window directly in the menu bar.
+### 🧠 Minimalist Menu Bar Icon
+- Displays a single, clean **brain glyph** in the macOS menu bar to prevent clutter.
+- Features a subtle **reduction indicator dot** in the top-right corner of the brain icon when token reduction or optimization is active.
+- Horizontally crops empty transparent boundaries dynamically so the menu item sits perfectly snug in the menu bar.
+
+### 📊 Multi-Provider Popover Tracking
+- **Claude (Anthropic API):** Monitor official utilization session/weekly limits and view your active quota window in a beautifully designed metrics card.
 - **DeepSeek:** Track your platform API balance (USD/CNY) with a clean, centered metrics card layout. Supports live currency conversion to Thai Baht (฿) using reference rates from the European Central Bank (ECB) via the Frankfurter API.
 - **Antigravity:** Track local language server remaining quotas and reset times for Gemini, Claude, and GPT models.
 
 ### 🗂️ Side-by-Side Multi-Column Layout
 - Toggle **Side-by-Side** views in Settings for both Claude and Antigravity sections to arrange Session and Weekly limits in parallel columns.
-- Maximizes vertical efficiency and presents your metrics side by side separated by clean vertical dividers.
+- Maximizes vertical efficiency and presents your metrics side-by-side separated by clean vertical dividers.
 
 ### 📈 Interactive 7-Day Usage Graphs
 - Visualizes daily token consumption for each active provider.
+- **Current Day Highlighting:** Automatically bolds the current day's weekday label and highlights it in primary text color for quick context.
 - Configurable **First Day of Week** (Sunday or Monday) to align with your calendar.
 - Fused graphs option to combine multiple model usage tracks (e.g. Gemini and Claude/GPT in Antigravity) into a single unified chart.
 - Toggle between shared global graph scales or separate auto-scaled peaks.
@@ -30,8 +36,9 @@ TokenBar is a native macOS menu bar application designed to monitor your AI prov
 - **Provider Ordering:** Easily drag or move providers to customize the order in which they appear in the menu list.
 - **Polling Intervals:** Configure automatic background refresh intervals (30s, 1m, 2m, or 5m).
 
-### 🔒 Secure Credentials
-- All sensitive information (such as DeepSeek API keys) is stored locally and securely in the macOS Keychain.
+### 🔒 Secure Credentials & Native Tech
+- **Keychain Integration:** Sensitive information (such as DeepSeek API keys) is stored locally and securely in the macOS Keychain.
+- **SVG Arc Support:** Fully parses and draws custom SVG paths natively inside SwiftUI, including robust approximation of elliptical arcs (`A`/`a` commands) via cubic Bézier curves for pixel-perfect provider icons.
 
 ---
 
