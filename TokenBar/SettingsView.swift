@@ -210,6 +210,8 @@ struct SettingsView: View {
             claudeCard
             deepseekCard
             antigravityCard
+            geminiCard
+            codexCard
         }
     }
     
@@ -261,7 +263,10 @@ struct SettingsView: View {
                     
                     Toggle("Show usage graph", isOn: $state.claudeShowGraph)
                         .font(.system(size: 12))
-                    
+
+                    Toggle("Show latest thread", isOn: $state.claudeShowLatestThread)
+                        .font(.system(size: 12))
+
                     Text("Displays your official Claude usage via your Claude Code access token, which is automatically fetched from your secure keychain or credentials file.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -416,21 +421,141 @@ struct SettingsView: View {
         )
     }
     
-    
+
+    private var geminiCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                ProviderIcon(provider: "gemini")
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Gemini")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Consumer Web Usage Limits")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $state.geminiEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+
+            if state.geminiEnabled {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+
+                    Toggle(isOn: $state.geminiSideBySide) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Side-by-side usage bars")
+                                .font(.system(size: 12))
+                            Text("Display Session and Week usage bars in the same row but different columns.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    Toggle("Show usage graph", isOn: $state.geminiShowGraph)
+                        .font(.system(size: 12))
+
+                    Text("Reads your Google session from Google Chrome to fetch the usage limits shown on gemini.google.com/usage. macOS will ask once for Keychain access to Chrome's encryption key.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private var codexCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                ProviderIcon(provider: "codex")
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Codex")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("Local Thread Token Usage")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: $state.codexEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+
+            if state.codexEnabled {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle(isOn: $state.codexSideBySide) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Side-by-side usage bars")
+                                .font(.system(size: 12))
+                            Text("Display Today and Week usage bars in the same row but different columns.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    Toggle("Show usage graph", isOn: $state.codexShowGraph)
+                        .font(.system(size: 12))
+
+                    Toggle("Show latest thread", isOn: $state.codexShowLatestThread)
+                        .font(.system(size: 12))
+
+                    Text("Reads local Codex thread token totals from ~/.codex/state_5.sqlite to display usage data.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
+    }
+
     private func providerName(_ id: String) -> String {
         switch id {
         case "claude": return "Claude"
         case "deepseek": return "DeepSeek"
         case "antigravity": return "Antigravity"
+        case "gemini": return "Gemini"
+        case "codex": return "Codex"
         default: return id.capitalized
         }
     }
-    
+
     private func providerColor(_ id: String) -> Color {
         switch id {
         case "claude": return Color(red: 0xD9 / 255.0, green: 0x77 / 255.0, blue: 0x57 / 255.0)
         case "deepseek": return Color(red: 0x4D / 255.0, green: 0x6B / 255.0, blue: 0xFE / 255.0)
         case "antigravity": return Color(red: 0x00 / 255.0, green: 0xB9 / 255.0, blue: 0x5C / 255.0)
+        case "gemini": return Color(red: 0xF4 / 255.0, green: 0xB4 / 255.0, blue: 0x00 / 255.0)
+        case "codex": return Color(red: 142 / 255.0, green: 142 / 255.0, blue: 147 / 255.0)
         default: return .secondary
         }
     }
@@ -439,6 +564,9 @@ struct SettingsView: View {
 // MARK: - SVG Drawing Utilities
 
 let ClaudeSVGPath = "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"
+
+// Gemini's four-point star (concave arc sides), viewBox 0 0 24 24.
+let GeminiSVGPath = "M12 24A14.304 14.304 0 0 0 0 12 14.304 14.304 0 0 0 12 0a14.305 14.305 0 0 0 12 12 14.305 14.305 0 0 0-12 12"
 
 let DeepSeekSVGPath = "M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"
 
@@ -817,6 +945,24 @@ struct ProviderIcon: View {
                         .foregroundStyle(Color(red: 0x00 / 255.0, green: 0xB9 / 255.0, blue: 0x5C / 255.0))
                 }
             }
+        case "gemini":
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0xF4 / 255.0, green: 0xB4 / 255.0, blue: 0x00 / 255.0).opacity(0.12))
+                    .frame(width: size, height: size)
+                SVGPathShape(d: GeminiSVGPath)
+                    .fill(Color(red: 0xF4 / 255.0, green: 0xB4 / 255.0, blue: 0x00 / 255.0))
+                    .frame(width: size * 0.55, height: size * 0.55)
+            }
+        case "codex":
+            ZStack {
+                Circle()
+                    .fill(Color(red: 142 / 255.0, green: 142 / 255.0, blue: 147 / 255.0).opacity(0.12))
+                    .frame(width: size, height: size)
+                Image(systemName: "terminal")
+                    .font(.system(size: size * 0.48, weight: .semibold))
+                    .foregroundStyle(Color(red: 142 / 255.0, green: 142 / 255.0, blue: 147 / 255.0))
+            }
         default:
             EmptyView()
         }
@@ -829,6 +975,8 @@ extension View {
             .applyClaudeObservers(state: state, onLiveChange: onLiveChange)
             .applyDeepSeekObservers(state: state, onLiveChange: onLiveChange)
             .applyAntigravityObservers(state: state, onLiveChange: onLiveChange)
+            .applyGeminiObservers(state: state, onLiveChange: onLiveChange)
+            .applyCodexObservers(state: state, onLiveChange: onLiveChange)
             .applyGeneralObservers(state: state, onLiveChange: onLiveChange)
     }
 
@@ -838,6 +986,7 @@ extension View {
             .onChange(of: state.claudeWindow) { onLiveChange() }
             .onChange(of: state.claudeSideBySide) { onLiveChange() }
             .onChange(of: state.claudeShowGraph) { onLiveChange() }
+            .onChange(of: state.claudeShowLatestThread) { onLiveChange() }
     }
 
     private func applyDeepSeekObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
@@ -855,6 +1004,21 @@ extension View {
             .onChange(of: state.antigravityShowGraph) { onLiveChange() }
     }
 
+    private func applyGeminiObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
+        self
+            .onChange(of: state.geminiEnabled) { onLiveChange() }
+            .onChange(of: state.geminiSideBySide) { onLiveChange() }
+            .onChange(of: state.geminiShowGraph) { onLiveChange() }
+    }
+
+    private func applyCodexObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
+        self
+            .onChange(of: state.codexEnabled) { onLiveChange() }
+            .onChange(of: state.codexShowGraph) { onLiveChange() }
+            .onChange(of: state.codexShowLatestThread) { onLiveChange() }
+            .onChange(of: state.codexSideBySide) { onLiveChange() }
+    }
+
     private func applyGeneralObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
         self
             .onChange(of: state.showRemaining) { onLiveChange() }
@@ -865,4 +1029,3 @@ extension View {
             .onChange(of: state.firstDayOfWeek) { onLiveChange() }
     }
 }
-

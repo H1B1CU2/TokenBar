@@ -14,9 +14,13 @@ struct MenuView: View {
                     deepseekBlock
                 } else if provider == "antigravity" {
                     antigravityBlock
+                } else if provider == "gemini" {
+                    geminiBlock
+                } else if provider == "codex" {
+                    codexBlock
                 }
             }
-            if !state.claudeEnabled && !state.deepseekEnabled && !state.antigravityEnabled {
+            if !state.claudeEnabled && !state.deepseekEnabled && !state.antigravityEnabled && !state.geminiEnabled && !state.codexEnabled {
                 Text("No providers enabled — open Settings")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
@@ -35,6 +39,12 @@ struct MenuView: View {
             Task { await onRefresh(false) }
         }
         .onChange(of: state.antigravityEnabled) {
+            Task { await onRefresh(false) }
+        }
+        .onChange(of: state.geminiEnabled) {
+            Task { await onRefresh(false) }
+        }
+        .onChange(of: state.codexEnabled) {
             Task { await onRefresh(false) }
         }
     }
@@ -58,6 +68,20 @@ struct MenuView: View {
     @ViewBuilder private var antigravityBlock: some View {
         if state.antigravityEnabled {
             antigravitySection
+            Divider()
+        }
+    }
+
+    @ViewBuilder private var geminiBlock: some View {
+        if state.geminiEnabled {
+            geminiSection
+            Divider()
+        }
+    }
+
+    @ViewBuilder private var codexBlock: some View {
+        if state.codexEnabled {
+            codexSection
             Divider()
         }
     }
@@ -91,6 +115,31 @@ struct MenuView: View {
                                 reset: state.claudeWeekResetAt)
             }
 
+            if state.claudeShowLatestThread && !state.claudeLatestThreads.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Latest Threads")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    ForEach(state.claudeLatestThreads, id: \.id) { thread in
+                        HStack(spacing: 6) {
+                            Text(thread.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(threadStatusColor(thread.status))
+                                    .frame(width: 5, height: 5)
+                                Text(thread.status)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .fixedSize()
+                        }
+                    }
+                }
+            }
+
             if let err = state.claudeError {
                 Text(err).font(.system(size: 10)).foregroundStyle(Color.claudeAccent)
             }
@@ -111,23 +160,249 @@ struct MenuView: View {
         .padding(.vertical, 10)
     }
 
-    // One Claude window's usage: label + percent + reset on a line, progress bar below.
-    private func claudeWindowRow(_ title: String, percent: Double, reset: Date?) -> some View {
+    private var deepseekSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProviderIcon(provider: "deepseek", size: 18)
+                Text("DeepSeek")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+
+            if state.deepseekAvailable {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Balance Left")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text(state.deepseekDisplayBalance)
+                        .font(.system(size: 18, weight: .bold, design: .monospaced))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+
+            if let err = state.deepseekError {
+                Text(err).font(.system(size: 10)).foregroundStyle(Color.deepseekAccent)
+            } else if !state.deepseekAvailable {
+                Text("Fetching DeepSeek balance…")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            if state.deepseekAvailable && state.deepseekShowGraph {
+                UsageGraphView(
+                    history: state.deepseekHistory.mapValues { $0 * 2_000_000.0 },
+                    tintColor: .deepseekAccent,
+                    unitFormatter: { formatTokens($0) },
+                    yAxisMax: state.useSeparateGraphScale ? deepseekTokenMax : globalTokenMax,
+                    showTotal: true,
+                    firstDayOfWeek: state.firstDayOfWeek
+                )
+                .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var antigravitySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                ProviderIcon(provider: "antigravity", size: 18)
+                Text("Antigravity")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+
+            if state.antigravityAvailable {
+                if state.antigravitySideBySide {
+                    HStack(alignment: .top, spacing: 12) {
+                        antigravitySideBlock
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    antigravityStackedBlock
+                }
+            }
+
+            if let err = state.antigravityError {
+                Text(err).font(.system(size: 10)).foregroundStyle(Color.antigravityGreen)
+            } else if !state.antigravityAvailable {
+                Text("Connecting to Antigravity…")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            if state.antigravityAvailable && state.antigravityShowGraph {
+                UsageGraphView(
+                    history: state.antigravityFusedGraph ? fusedAntigravityHistory : state.antigravityGeminiHistory.mapValues { $0 * 1000.0 },
+                    history2: state.antigravityFusedGraph ? nil : state.antigravityClaudeGptHistory.mapValues { $0 * 1000.0 },
+                    tintColor: .antigravityGreen,
+                    tintColor2: state.antigravityFusedGraph ? nil : .claudeAccent,
+                    unitFormatter: { formatTokens($0) },
+                    yAxisMax: state.useSeparateGraphScale ? (state.antigravityFusedGraph ? fusedAntigravityTokenMax : max(geminiTokenMax, claudeGptTokenMax)) : globalTokenMax,
+                    showTotal: true,
+                    firstDayOfWeek: state.firstDayOfWeek
+                )
+                .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var geminiSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProviderIcon(provider: "gemini", size: 18)
+                Text("Gemini")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+
+            if state.geminiAvailable {
+                if state.geminiSideBySide {
+                    HStack(alignment: .top, spacing: 12) {
+                        geminiWindowRow("Session",
+                                        percent: state.geminiSessionPercent,
+                                        reset: state.geminiSessionResetAt)
+                        Divider()
+                        geminiWindowRow("Week",
+                                        percent: state.geminiWeekPercent,
+                                        reset: state.geminiWeekResetAt)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    geminiWindowRow("Session",
+                                    percent: state.geminiSessionPercent,
+                                    reset: state.geminiSessionResetAt)
+                    geminiWindowRow("Week",
+                                    percent: state.geminiWeekPercent,
+                                    reset: state.geminiWeekResetAt)
+                }
+            }
+
+            if let err = state.geminiError {
+                Text(err).font(.system(size: 10)).foregroundStyle(Color.geminiAccent)
+            } else if !state.geminiAvailable {
+                Text("Reading Gemini web usage…")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            if state.geminiAvailable && state.geminiShowGraph {
+                UsageGraphView(
+                    history: state.geminiHistory.mapValues { $0 * 2000.0 },
+                    tintColor: .geminiAccent,
+                    unitFormatter: { formatTokens($0) },
+                    yAxisMax: state.useSeparateGraphScale ? geminiWebTokenMax : globalTokenMax,
+                    showTotal: true,
+                    firstDayOfWeek: state.firstDayOfWeek
+                )
+                .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private var codexSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProviderIcon(provider: "codex", size: 18)
+                Text("Codex")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+            }
+
+            if state.codexAvailable {
+                if state.codexSideBySide {
+                    HStack(alignment: .top, spacing: 12) {
+                        codexWindowRow("Session",
+                                       percent: state.codexSessionPercent,
+                                       reset: state.codexSessionResetAt)
+                        Divider()
+                        codexWindowRow("Week",
+                                       percent: state.codexWeekPercent,
+                                       reset: state.codexWeekResetAt)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    codexWindowRow("Session",
+                                   percent: state.codexSessionPercent,
+                                   reset: state.codexSessionResetAt)
+                    codexWindowRow("Week",
+                                   percent: state.codexWeekPercent,
+                                   reset: state.codexWeekResetAt)
+                }
+
+                if state.codexShowLatestThread && !state.codexLatestThreads.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Latest Threads")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        ForEach(state.codexLatestThreads, id: \.id) { thread in
+                            HStack(spacing: 6) {
+                                Text(thread.title)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 6)
+                                HStack(spacing: 3) {
+                                    Circle()
+                                        .fill(threadStatusColor(thread.status))
+                                        .frame(width: 5, height: 5)
+                                    Text(thread.status)
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .fixedSize()
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
+                }
+            }
+
+            if let err = state.codexError {
+                Text(err).font(.system(size: 10)).foregroundStyle(Color.codexAccent)
+            } else if !state.codexAvailable {
+                Text("Reading local Codex usage…")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            if state.codexAvailable && state.codexShowGraph {
+                UsageGraphView(
+                    history: state.codexHistory,
+                    tintColor: .codexAccent,
+                    unitFormatter: { formatTokens($0) },
+                    yAxisMax: state.useSeparateGraphScale ? codexTokenMax : globalTokenMax,
+                    showTotal: true,
+                    firstDayOfWeek: state.firstDayOfWeek
+                )
+                .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private func geminiWindowRow(_ title: String, percent: Double, reset: Date?) -> some View {
         let fraction = min(1.0, max(0, percent / 100))
         let displayFraction = state.showRemaining ? (1.0 - fraction) : fraction
         let displayPercent = state.showRemaining ? (100.0 - percent) : percent
         let suffix = state.showRemaining ? "left" : "used"
+        
         return VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
-            progressBar(displayFraction, color: .claudeAccent)
+            progressBar(displayFraction, color: .geminiAccent)
             HStack(spacing: 6) {
                 Text("\(percentText(displayPercent)) \(suffix)")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .layoutPriority(1)
                 Spacer()
-                if let resetStr = resetText(reset, compact: state.claudeSideBySide) {
+                if let resetStr = resetText(reset, compact: state.geminiSideBySide) {
                     Text(resetStr)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
@@ -137,354 +412,160 @@ struct MenuView: View {
         }
     }
 
-    private func percentText(_ p: Double) -> String {
-        p < 1 && p > 0 ? String(format: "%.1f%%", p) : "\(Int(p.rounded()))%"
-    }
-
-    private func formatTokens(_ value: Double) -> String {
-        let intVal = Int(value.rounded())
-        if intVal >= 1_000_000 {
-            let doubleVal = Double(intVal) / 1_000_000.0
-            return String(format: "%.1fM tokens", doubleVal)
-        } else if intVal >= 1_000 {
-            let doubleVal = Double(intVal) / 1_000.0
-            return String(format: "%.1fk tokens", doubleVal)
-        } else {
-            return "\(intVal) tokens"
-        }
-    }
-
-    // Reset line: under 24h shows time left ("resets in 3 hr 44 min"); otherwise the
-    // absolute weekday + time ("resets 01:00 on Monday"). No comma between units.
-    private func resetText(_ reset: Date?) -> String? {
-        resetText(reset, compact: false)
-    }
-
-    private func resetText(_ reset: Date?, compact: Bool) -> String? {
-        guard let reset else { return nil }
-        let secs = reset.timeIntervalSinceNow
-        if secs <= 0 { return nil }
-        if secs < 24 * 3600 {
-            let totalMin = max(1, Int((secs / 60).rounded()))
-            let h = totalMin / 60
-            let m = totalMin % 60
-            if compact {
-                let left = h > 0 ? (m > 0 ? "\(h)h \(m)m" : "\(h)h") : "\(m)m"
-                return "in \(left)"
-            } else {
-                let left = h > 0 ? (m > 0 ? "\(h) hr \(m) min" : "\(h) hr") : "\(m) min"
-                return "resets in \(left)"
-            }
-        }
-        let time = reset.formatted(.dateTime.hour().minute())
-        if compact {
-            let day  = reset.formatted(.dateTime.weekday(.abbreviated))
-            return "\(day) \(time)"
-        } else {
-            let day  = reset.formatted(.dateTime.weekday(.wide))
-            return "resets \(time) on \(day)"
-        }
-    }
-
-    // Custom progress bar drawn with explicit shape fills. A SwiftUI ProgressView's
-    // .tint() renders in the inactive (grayed) appearance until the popover window
-    // becomes key (on click) — an accessory app's transient popover isn't key on show.
-    private func progressBar(_ fraction: Double, color: Color) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.secondary.opacity(0.25))
-                Capsule()
-                    .fill(color)
-                    .frame(width: max(0, min(1, fraction)) * geo.size.width)
-            }
-        }
-        .frame(height: 5)
-    }
-
-    private var deepseekSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                ProviderIcon(provider: "deepseek", size: 18)
-                Text("DeepSeek")
-                    .font(.system(size: 12, weight: .semibold))
+    private func codexWindowRow(_ title: String, percent: Double, reset: Date?) -> some View {
+        let fraction = min(1.0, max(0, percent / 100))
+        let displayFraction = state.showRemaining ? (1.0 - fraction) : fraction
+        let displayPercent = state.showRemaining ? (100.0 - percent) : percent
+        let suffix = state.showRemaining ? "left" : "used"
+        
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            progressBar(displayFraction, color: .codexAccent)
+            HStack(spacing: 6) {
+                Text("\(percentText(displayPercent)) \(suffix)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 Spacer()
-                if state.deepseekApiKey.isEmpty {
-                    Text("No API key")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            if let err = state.deepseekError {
-                Text(err).font(.caption2).foregroundStyle(.red)
-            }
-
-            if !state.deepseekApiKey.isEmpty {
-                if state.deepseekShowGraph {
-                    UsageGraphView(
-                        history: state.deepseekHistory.mapValues { $0 * 2_000_000.0 },
-                        tintColor: .deepseekAccent,
-                        unitFormatter: { tokens in
-                            let usd = tokens / 2_000_000.0
-                            let money = state.deepseekThbActive ? usd * state.deepseekThbRate : usd
-                            let moneyStr = balanceDisplay(money, currency: state.deepseekDisplayCurrency)
-                            return "\(formatTokens(tokens)) (\(moneyStr))"
-                        },
-                        yAxisMax: state.useSeparateGraphScale ? deepseekTokenMax : globalTokenMax,
-                        firstDayOfWeek: state.firstDayOfWeek
-                    )
-                    .padding(.top, 4)
-                }
-
-                deepseekBalanceRow
-                    .padding(.top, 6)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-
-    // Balance summary shown under the DeepSeek graph, mirroring the label/value
-    // layout of the Claude and Antigravity usage rows.
-    private var deepseekBalanceRow: some View {
-        Group {
-            if let balance = state.deepseekDisplayBalance {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("Balance Left")
-                        .font(.system(size: 10, weight: .semibold))
+                if let resetStr = resetText(reset, compact: state.codexSideBySide) {
+                    Text(resetStr)
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(balanceDisplay(balance, currency: state.deepseekDisplayCurrency))
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .padding(.vertical, 4)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color.primary.opacity(0.03))
-                .cornerRadius(6)
-            } else {
-                HStack(spacing: 6) {
-                    Text("Balance")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("—")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }
     }
 
-    private var footerButtons: some View {
-        HStack(spacing: 0) {
-            Button {
-                Task { await onRefresh(true) }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(.system(size: 12))
-                    .frame(maxWidth: .infinity)
+    private func codexTokenUsageRow(_ title: String, tokens: Double, maxTokens: Double) -> some View {
+        let fraction = maxTokens > 0 ? min(1.0, max(0, tokens / maxTokens)) : 0
+
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            progressBar(fraction, color: .codexAccent)
+            HStack(spacing: 6) {
+                Text(formatTokens(tokens))
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                Spacer()
             }
-            .buttonStyle(.plain)
-            .padding(.vertical, 8)
-
-            Divider().frame(height: 20)
-
-            Button {
-                onSettings()
-            } label: {
-                Label("Settings", systemImage: "gear")
-                    .font(.system(size: 12))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-            .padding(.vertical, 8)
-
-            Divider().frame(height: 20)
-
-            Button {
-                NSApp.terminate(nil)
-            } label: {
-                Label("Quit", systemImage: "power")
-                    .font(.system(size: 12))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-            .padding(.vertical, 8)
-        }
-        .foregroundStyle(.secondary)
-    }
-
-    // MARK: - Helpers
-
-    // Per-day sum of both Antigravity histories, in graph units (× 1000 like the
-    // individual graphs) — used when the "Combine usage graphs" setting is on.
-    private var antigravityFusedHistory: [String: Double] {
-        var merged = state.antigravityGeminiHistory
-        for (day, value) in state.antigravityClaudeGptHistory {
-            merged[day, default: 0] += value
-        }
-        return merged.mapValues { $0 * 1000.0 }
-    }
-
-    private var deepseekHistoryDisplay: [String: Double] {
-        if state.deepseekThbActive {
-            return state.deepseekHistory.mapValues { $0 * state.deepseekThbRate }
-        } else {
-            return state.deepseekHistory
         }
     }
 
-    private func balanceDisplay(_ balance: Double, currency: String) -> String {
-        String(format: "%@%.2f", CurrencyFormat.symbol(currency), balance)
+    private func codexMetric(_ title: String, tokens: Double) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text(formatTokens(tokens))
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var antigravitySection: some View {
+    // MARK: - Antigravity Layout Modes
+
+    @ViewBuilder private var antigravityStackedBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                ProviderIcon(provider: "antigravity", size: 18)
-                Text("Antigravity")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-            }
-            if state.antigravityAvailable {
-                if state.antigravitySideBySide {
-                    HStack(alignment: .top, spacing: 12) {
-                        // Group 1: Gemini Models
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Gemini Models")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.primary)
-                            antigravityModelRow("Session",
-                                                 percent: state.antigravityGemini5hRemainingPercent,
-                                                 reset: state.antigravityGemini5hResetAt)
-                            antigravityModelRow("Week",
-                                                 percent: state.antigravityGeminiWeeklyRemainingPercent,
-                                                 reset: state.antigravityGeminiWeeklyResetAt)
-                        }
-                        
-                        Divider()
-                        
-                        // Group 2: Claude & GPT Models
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Claude & GPT Models")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.primary)
-                            antigravityModelRow("Session",
-                                                 percent: state.antigravityClaudeGpt5hRemainingPercent,
-                                                 reset: state.antigravityClaudeGpt5hResetAt)
-                            antigravityModelRow("Week",
-                                                 percent: state.antigravityClaudeGptWeeklyRemainingPercent,
-                                                 reset: state.antigravityClaudeGptWeeklyResetAt)
-                        }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        // Group 1: Gemini Models
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Gemini Models")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.primary)
-                            antigravityModelRow("Session",
-                                                 percent: state.antigravityGemini5hRemainingPercent,
-                                                 reset: state.antigravityGemini5hResetAt)
-                            antigravityModelRow("Week",
-                                                 percent: state.antigravityGeminiWeeklyRemainingPercent,
-                                                 reset: state.antigravityGeminiWeeklyResetAt)
-                        }
-                        
-                        Divider()
-                        
-                        // Group 2: Claude & GPT Models
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Claude & GPT Models")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.primary)
-                            antigravityModelRow("Session",
-                                                 percent: state.antigravityClaudeGpt5hRemainingPercent,
-                                                 reset: state.antigravityClaudeGpt5hResetAt)
-                            antigravityModelRow("Week",
-                                                 percent: state.antigravityClaudeGptWeeklyRemainingPercent,
-                                                 reset: state.antigravityClaudeGptWeeklyResetAt)
-                        }
-                    }
-                }
-            } else if let err = state.antigravityError {
-                Text(err).font(.system(size: 10)).foregroundStyle(Color.antigravityGreen)
-            } else {
-                Text("Connecting to server...")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
+            antigravityRow("Gemini Models",
+                           session: state.antigravityGeminiSessionPercent,
+                           sessionReset: state.antigravityGeminiSessionResetAt,
+                           week: state.antigravityGeminiWeekPercent,
+                           weekReset: state.antigravityGeminiWeekResetAt,
+                           accentColor: .antigravityGreen)
 
-            if state.antigravityAvailable {
-                if state.antigravityShowGraph {
-                    if state.antigravityFusedGraph {
-                        UsageGraphView(
-                            history: antigravityFusedHistory,
-                            tintColor: .antigravityGreen,
-                            unitFormatter: { formatTokens($0) },
-                            yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
-                            showTotal: true,
-                            firstDayOfWeek: state.firstDayOfWeek
-                        )
-                        .padding(.top, 4)
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Gemini Models")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                UsageGraphView(
-                                    history: state.antigravityGeminiHistory.mapValues { $0 * 1000.0 },
-                                    tintColor: .antigravityGreen,
-                                    unitFormatter: { formatTokens($0) },
-                                    yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
-                                    showTotal: true,
-                                    firstDayOfWeek: state.firstDayOfWeek
-                                )
-                            }
+            Divider()
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Claude & GPT")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                UsageGraphView(
-                                    history: state.antigravityClaudeGptHistory.mapValues { $0 * 1000.0 },
-                                    tintColor: .antigravityGreen,
-                                    unitFormatter: { formatTokens($0) },
-                                    yAxisMax: state.useSeparateGraphScale ? antigravityTokenMax : globalTokenMax,
-                                    showTotal: true,
-                                    firstDayOfWeek: state.firstDayOfWeek
-                                )
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-            }
+            antigravityRow("Claude & GPT Models",
+                           session: state.antigravityClaudeGptSessionPercent,
+                           sessionReset: state.antigravityClaudeGptSessionResetAt,
+                           week: state.antigravityClaudeGptWeekPercent,
+                           weekReset: state.antigravityClaudeGptWeekResetAt,
+                           accentColor: .antigravityGreen)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
-    private func antigravityModelRow(_ title: String, percent: Double, reset: Date?) -> some View {
-        let fraction = min(1.0, max(0.0, percent / 100.0))
-        let displayFraction = state.showRemaining ? fraction : (1.0 - fraction)
-        let displayPercent = state.showRemaining ? percent : (100.0 - percent)
+    @ViewBuilder private var antigravitySideBlock: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Gemini Models")
+                    .font(.system(size: 11, weight: .bold))
+                antigravityWindowRow("Session",
+                                    percent: state.antigravityGeminiSessionPercent,
+                                    reset: state.antigravityGeminiSessionResetAt,
+                                    accentColor: .antigravityGreen)
+                antigravityWindowRow("Week",
+                                    percent: state.antigravityGeminiWeekPercent,
+                                    reset: state.antigravityGeminiWeekResetAt,
+                                    accentColor: .antigravityGreen)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Claude & GPT Models")
+                    .font(.system(size: 11, weight: .bold))
+                antigravityWindowRow("Session",
+                                    percent: state.antigravityClaudeGptSessionPercent,
+                                    reset: state.antigravityClaudeGptSessionResetAt,
+                                    accentColor: .antigravityGreen)
+                antigravityWindowRow("Week",
+                                    percent: state.antigravityClaudeGptWeekPercent,
+                                    reset: state.antigravityClaudeGptWeekResetAt,
+                                    accentColor: .antigravityGreen)
+            }
+        }
+    }
+
+    private func antigravityRow(
+        _ title: String,
+        session: Double,
+        sessionReset: Date?,
+        week: Double,
+        weekReset: Date?,
+        accentColor: Color
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+
+            HStack(alignment: .top, spacing: 12) {
+                antigravityWindowRow("Session",
+                                    percent: session,
+                                    reset: sessionReset,
+                                    accentColor: accentColor)
+                Divider()
+                antigravityWindowRow("Week",
+                                    percent: week,
+                                    reset: weekReset,
+                                    accentColor: accentColor)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func antigravityWindowRow(
+        _ title: String,
+        percent: Double,
+        reset: Date?,
+        accentColor: Color
+    ) -> some View {
+        let fraction = min(1.0, max(0, percent / 100))
+        let displayFraction = state.showRemaining ? (1.0 - fraction) : fraction
+        let displayPercent = state.showRemaining ? (100.0 - percent) : percent
         let suffix = state.showRemaining ? "left" : "used"
 
         return VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
-            progressBar(displayFraction, color: .antigravityGreen)
+            progressBar(displayFraction, color: accentColor)
             HStack(spacing: 6) {
                 Text("\(percentText(displayPercent)) \(suffix)")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .layoutPriority(1)
                 Spacer()
                 if let resetStr = resetText(reset, compact: state.antigravitySideBySide) {
                     Text(resetStr)
@@ -496,10 +577,119 @@ struct MenuView: View {
         }
     }
 
-    private func progressTint(_ fraction: Double) -> Color {
-        if fraction < 0.6 { return .green }
-        if fraction < 0.85 { return .orange }
-        return .red
+    // MARK: - Generic UI Components
+
+    private func claudeWindowRow(_ title: String, percent: Double, reset: Date?) -> some View {
+        let fraction = min(1.0, max(0, percent / 100))
+        let displayFraction = state.showRemaining ? (1.0 - fraction) : fraction
+        let displayPercent = state.showRemaining ? (100.0 - percent) : percent
+        let suffix = state.showRemaining ? "left" : "used"
+
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            progressBar(displayFraction, color: .claudeAccent)
+            HStack(spacing: 6) {
+                Text("\(percentText(displayPercent)) \(suffix)")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                Spacer()
+                if let resetStr = resetText(reset, compact: state.claudeSideBySide) {
+                    Text(resetStr)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private func progressBar(_ fraction: Double, color: Color) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.secondary.opacity(0.15))
+                    .frame(height: 4)
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(color)
+                    .frame(width: max(0, min(1, fraction)) * geo.size.width, height: 4)
+            }
+        }
+        .frame(height: 4)
+    }
+
+    private var footerButtons: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 0) {
+                Button(action: {
+                    Task { await onRefresh(true) }
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                        Text("Refresh")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(FooterButtonStyle())
+
+                Divider().frame(height: 24)
+
+                Button(action: {
+                    onSettings()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "gearshape")
+                        Text("Settings")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(FooterButtonStyle())
+
+                Divider().frame(height: 24)
+
+                Button(action: {
+                    NSApp.terminate(nil)
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "power")
+                        Text("Quit")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(FooterButtonStyle())
+            }
+            .padding(.vertical, 4)
+            .background(.regularMaterial)
+        }
+    }
+
+    // MARK: - Formatters
+
+    private func percentText(_ percent: Double) -> String {
+        return String(format: "%.0f%%", percent)
+    }
+
+    private func formatTokens(_ value: Double) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", value / 1_000_000.0)
+        } else if value >= 1000 {
+            return String(format: "%.0fk", value / 1000.0)
+        } else {
+            return String(format: "%.0f", value)
+        }
+    }
+
+    private func resetText(_ date: Date?, compact: Bool) -> String? {
+        guard let date else { return nil }
+        let formatter = DateFormatter()
+        if Calendar.current.isDateInToday(date) {
+            formatter.dateFormat = "HH:mm"
+            return "reset \(formatter.string(from: date))"
+        } else {
+            formatter.dateFormat = compact ? "E HH:mm" : "EEEE HH:mm"
+            return formatter.string(from: date)
+        }
     }
 
     private var claudeTokenMax: Double {
@@ -512,12 +702,53 @@ struct MenuView: View {
         return max(maxVal, 100_000.0)
     }
 
-    private var antigravityTokenMax: Double {
-        let geminiMax = (state.antigravityGeminiHistory.values.max() ?? 0.0) * 1000.0
-        let claudeGptMax = (state.antigravityClaudeGptHistory.values.max() ?? 0.0) * 1000.0
-        let fusedMax = antigravityFusedHistory.values.max() ?? 0.0
-        let maxVal = max(geminiMax, max(claudeGptMax, fusedMax))
+    private var geminiTokenMax: Double {
+        let maxVal = (state.antigravityGeminiHistory.values.max() ?? 0.0) * 1000.0
         return max(maxVal, 100_000.0)
+    }
+
+    private var claudeGptTokenMax: Double {
+        let maxVal = (state.antigravityClaudeGptHistory.values.max() ?? 0.0) * 1000.0
+        return max(maxVal, 100_000.0)
+    }
+
+    private var fusedAntigravityTokenMax: Double {
+        let maxVal = fusedAntigravityHistory.values.max() ?? 0.0
+        return max(maxVal, 100_000.0)
+    }
+
+    private var fusedAntigravityHistory: [String: Double] {
+        var merged = state.antigravityGeminiHistory.mapValues { $0 * 1000.0 }
+        for (key, val) in state.antigravityClaudeGptHistory {
+            merged[key, default: 0.0] += val * 1000.0
+        }
+        return merged
+    }
+
+    private var geminiWebTokenMax: Double {
+        let maxVal = (state.geminiHistory.values.max() ?? 0.0) * 2000.0
+        return max(maxVal, 100_000.0)
+    }
+
+    private var codexTokenMax: Double {
+        let maxVal = state.codexHistory.values.max() ?? 0.0
+        return max(maxVal, 100_000.0)
+    }
+
+    private var codexUsageBarMax: Double {
+        let latestThreadMax = state.codexLatestThreads.map(\.tokens).max() ?? state.codexActiveThreadTokens
+        return max(codexTokenMax, state.codexTodayTokens, state.codexWeekTokens, latestThreadMax)
+    }
+
+    private func threadStatusColor(_ status: String) -> Color {
+        switch status {
+        case "done":
+            return Color.green
+        case "coding":
+            return Color.orange
+        default:
+            return Color.secondary
+        }
     }
 
     private var globalTokenMax: Double {
@@ -532,8 +763,17 @@ struct MenuView: View {
         
         let claudeGptMax = state.antigravityClaudeGptHistory.values.max() ?? 0.0
         let claudeGptTokenMax = claudeGptMax * 1000.0
+
+        let geminiWebMax = state.geminiHistory.values.max() ?? 0.0
+        let geminiWebTokenMax = geminiWebMax * 2000.0
         
-        let maxVal = max(claudeTokenMax, max(deepseekTokenMax, max(geminiTokenMax, claudeGptTokenMax)))
+        let codexTokenMax = state.codexHistory.values.max() ?? 0.0
+
+        let maxVal = max(claudeTokenMax,
+                         max(deepseekTokenMax,
+                             max(geminiTokenMax,
+                                 max(claudeGptTokenMax,
+                                     max(geminiWebTokenMax, codexTokenMax)))))
         return max(maxVal, 100_000.0) // baseline minimum of 100k tokens
     }
 }
@@ -542,4 +782,17 @@ extension Color {
     static let claudeAccent = Color(red: 0xD9 / 255.0, green: 0x77 / 255.0, blue: 0x57 / 255.0)
     static let deepseekAccent = Color(red: 0x4D / 255.0, green: 0x6B / 255.0, blue: 0xFE / 255.0)
     static let antigravityGreen = Color(red: 0x00 / 255.0, green: 0xB9 / 255.0, blue: 0x5C / 255.0)
+    static let geminiAccent = Color(red: 0xF4 / 255.0, green: 0xB4 / 255.0, blue: 0x00 / 255.0)
+    static let codexAccent = Color(red: 142 / 255.0, green: 142 / 255.0, blue: 147 / 255.0)
+}
+
+struct FooterButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.primary)
+            .padding(.vertical, 6)
+            .background(configuration.isPressed ? Color.secondary.opacity(0.15) : Color.clear)
+            .contentShape(Rectangle())
+    }
 }

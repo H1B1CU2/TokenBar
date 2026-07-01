@@ -203,6 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let claudeOn = state.claudeEnabled
         let deepseekOn = state.deepseekEnabled
         let antigravityOn = state.antigravityEnabled
+        let geminiOn = state.geminiEnabled
+        let codexOn = state.codexEnabled
 
         // Skip the usage call while backing off from a 429, or if we already fetched
         // a moment ago (coalesces window-toggle / settings / manual-refresh bursts).
@@ -213,40 +215,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let scanClaude = claudeOn && !inBackoff && !scannedRecently
         let scanAntigravity = antigravityOn
 
-        var claudeOpt: ClaudeUsage?
-        var deepseek: DeepSeekBalance?
-        var antigravityOpt: AntigravityUsage?
+        // Run every enabled provider scan concurrently; a disabled provider yields
+        // nil and its last-known state is left untouched below.
+        async let claudeScan: ClaudeUsage? = scanClaude ? ClaudeScanner.scan() : nil
+        async let deepseekScan: DeepSeekBalance? = deepseekOn ? DeepSeekClient.fetchBalance(apiKey: apiKey) : nil
+        async let antigravityScan: AntigravityUsage? = scanAntigravity ? AntigravityScanner.scan() : nil
+        async let geminiScan: GeminiWebUsage? = geminiOn ? GeminiScanner.scan() : nil
+        async let codexScan: CodexUsage? = codexOn ? CodexScanner.scan() : nil
 
-        // We can run all enabled scans in parallel using async let
-        if scanClaude && deepseekOn && scanAntigravity {
-            async let c = ClaudeScanner.scan()
-            async let d = DeepSeekClient.fetchBalance(apiKey: apiKey)
-            async let a = AntigravityScanner.scan()
-            claudeOpt = await c
-            deepseek = await d
-            antigravityOpt = await a
-        } else if scanClaude && deepseekOn {
-            async let c = ClaudeScanner.scan()
-            async let d = DeepSeekClient.fetchBalance(apiKey: apiKey)
-            claudeOpt = await c
-            deepseek = await d
-        } else if scanClaude && scanAntigravity {
-            async let c = ClaudeScanner.scan()
-            async let a = AntigravityScanner.scan()
-            claudeOpt = await c
-            antigravityOpt = await a
-        } else if deepseekOn && scanAntigravity {
-            async let d = DeepSeekClient.fetchBalance(apiKey: apiKey)
-            async let a = AntigravityScanner.scan()
-            deepseek = await d
-            antigravityOpt = await a
-        } else if scanClaude {
-            claudeOpt = await ClaudeScanner.scan()
-        } else if deepseekOn {
-            deepseek = await DeepSeekClient.fetchBalance(apiKey: apiKey)
-        } else if scanAntigravity {
-            antigravityOpt = await AntigravityScanner.scan()
-        }
+        let claudeOpt = await claudeScan
+        let deepseek = await deepseekScan
+        let antigravityOpt = await antigravityScan
+        let geminiOpt = await geminiScan
+        let codexOpt = await codexScan
 
         if let claude = claudeOpt {
             claudeLastScanAt = Date()
@@ -287,6 +268,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
         }
 
+        if let gemini = geminiOpt {
+            applyGemini(gemini)
+        }
+
+        if let codex = codexOpt {
+            applyCodex(codex)
+        }
+
         // Refresh the live THB rate when THB display is on; on failure the cached
         // rate is kept so the balance still converts.
         if deepseekOn, state.deepseekShowTHB, let ds = deepseek {
@@ -301,7 +290,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             claudeSession: state.claudeAvailable ? state.claudeSessionPercent : nil,
             deepseekBalance: state.deepseekEnabled && state.deepseekError == nil ? state.deepseekBalance : nil,
             geminiWeeklyRemaining: state.antigravityAvailable ? state.antigravityGeminiWeeklyRemainingPercent : nil,
-            claudeGptWeeklyRemaining: state.antigravityAvailable ? state.antigravityClaudeGptWeeklyRemainingPercent : nil
+            claudeGptWeeklyRemaining: state.antigravityAvailable ? state.antigravityClaudeGptWeeklyRemainingPercent : nil,
+            geminiWebSession: state.geminiAvailable ? state.geminiSessionPercent : nil
         )
 
         if reduced && state.showReductionIndicator {
@@ -332,6 +322,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     // Folds a Claude scan result into state. Transient failures (429/5xx/network)
     // keep the last good usage and arm a backoff; only hard failures clear data.
     private func applyClaude(_ claude: ClaudeUsage) {
+        // Latest threads come from local session files, independent of the usage API —
+        // keep them current regardless of the API outcome.
+        state.claudeLatestThreads = claude.latestThreads
         if claude.available {
             state.claudeAvailable = true
             state.claudeSessionPercent = claude.sessionPercent
@@ -344,8 +337,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             claudeRateLimitStreak = 0
         } else if claude.transient {
             claudeRateLimitStreak += 1
-            let step = min(claudeRateLimitStreak - 1, 4)             // 30, 60, 120, 240, 480s
-            let wait = claude.retryAfter ?? Double(min(30 * (1 << step), 600))
+            let step = min(claudeRateLimitStreak - 1, 5)             // 30, 60, 120, 240, 480, 900s
+            // Back off further on sustained rate-limiting (up to 15 min) so TokenBar
+            // stops re-polling every cycle and contributing to the shared-token limit
+            // while an active Claude Code session is consuming the budget.
+            let wait = claude.retryAfter ?? Double(min(30 * (1 << step), 900))
             claudeBackoffUntil = Date().addingTimeInterval(wait)
             // Keep the last usage on screen; only message when we have nothing to show.
             state.claudeError = state.claudeAvailable ? nil : "Rate limited — retrying shortly"
@@ -359,6 +355,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             state.clearPersistedClaudeUsage()
             claudeBackoffUntil = nil
             claudeRateLimitStreak = 0
+        }
+    }
+
+    // Folds a Gemini scan result into state. A transient failure keeps the last good
+    // usage on screen; a hard failure clears it and surfaces the error.
+    private func applyGemini(_ gemini: GeminiWebUsage) {
+        if gemini.available {
+            state.geminiAvailable = true
+            state.geminiSessionPercent = gemini.sessionPercent
+            state.geminiSessionResetAt = gemini.sessionResetAt
+            state.geminiWeekPercent = gemini.weekPercent
+            state.geminiWeekResetAt = gemini.weekResetAt
+            state.geminiError = nil
+        } else if gemini.transient {
+            // Keep the last usage on screen; only message when we have nothing to show.
+            state.geminiError = state.geminiAvailable ? nil : gemini.error
+        } else {
+            state.geminiAvailable = false
+            state.geminiSessionPercent = 0
+            state.geminiSessionResetAt = nil
+            state.geminiWeekPercent = 0
+            state.geminiWeekResetAt = nil
+            state.geminiError = gemini.error
+        }
+    }
+
+    private func applyCodex(_ codex: CodexUsage) {
+        if codex.available {
+            state.codexAvailable = true
+            state.codexTodayTokens = codex.todayTokens
+            state.codexWeekTokens = codex.weekTokens
+            state.codexLimitPercent = codex.limitPercent
+            state.codexLimitResetAt = codex.limitResetAt
+            state.codexIsLimited = codex.isLimited
+            state.codexSessionPercent = codex.sessionPercent
+            state.codexSessionResetAt = codex.sessionResetAt
+            state.codexWeekPercent = codex.weekPercent
+            state.codexWeekResetAt = codex.weekResetAt
+            state.codexActiveThreadTitle = codex.activeThread?.title ?? ""
+            state.codexActiveThreadTokens = codex.activeThread?.tokens ?? 0
+            state.codexActiveThreadUpdatedAt = codex.activeThread?.updatedAt
+            state.codexLatestThreads = codex.latestThreads
+            state.codexHistory = codex.history
+            state.codexError = nil
+        } else {
+            state.codexAvailable = false
+            state.codexTodayTokens = 0
+            state.codexWeekTokens = 0
+            state.codexLimitPercent = 0
+            state.codexLimitResetAt = nil
+            state.codexIsLimited = false
+            state.codexSessionPercent = 0
+            state.codexSessionResetAt = nil
+            state.codexWeekPercent = 0
+            state.codexWeekResetAt = nil
+            state.codexActiveThreadTitle = ""
+            state.codexActiveThreadTokens = 0
+            state.codexActiveThreadUpdatedAt = nil
+            state.codexLatestThreads = []
+            state.codexError = codex.error
         }
     }
 

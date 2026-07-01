@@ -49,6 +49,31 @@ final class AppState {
     var claudeWeekPercent: Double = 0
     var claudeWeekResetAt: Date? = nil
     var claudeAvailable: Bool = false
+    var claudeLatestThreads: [ClaudeThreadUsage] = []
+
+    // Gemini — consumer web usage (0–100 used) from gemini.google.com/usage
+    var geminiSessionPercent: Double = 0
+    var geminiSessionResetAt: Date? = nil
+    var geminiWeekPercent: Double = 0
+    var geminiWeekResetAt: Date? = nil
+    var geminiAvailable: Bool = false
+
+    // Codex — local token usage from ~/.codex/state_5.sqlite
+    var codexTodayTokens: Double = 0
+    var codexWeekTokens: Double = 0
+    var codexLimitPercent: Double = 0
+    var codexLimitResetAt: Date? = nil
+    var codexIsLimited: Bool = false
+    var codexActiveThreadTitle: String = ""
+    var codexActiveThreadTokens: Double = 0
+    var codexActiveThreadUpdatedAt: Date? = nil
+    var codexLatestThreads: [CodexThreadUsage] = []
+    var codexAvailable: Bool = false
+
+    var codexSessionPercent: Double = 0
+    var codexSessionResetAt: Date? = nil
+    var codexWeekPercent: Double = 0
+    var codexWeekResetAt: Date? = nil
 
     // Provider enable toggles (fetched + shown in the popover)
     var claudeEnabled: Bool {
@@ -59,6 +84,12 @@ final class AppState {
     }
     var antigravityEnabled: Bool {
         didSet { UserDefaults.standard.set(antigravityEnabled, forKey: "antigravityEnabled") }
+    }
+    var geminiEnabled: Bool {
+        didSet { UserDefaults.standard.set(geminiEnabled, forKey: "geminiEnabled") }
+    }
+    var codexEnabled: Bool {
+        didSet { UserDefaults.standard.set(codexEnabled, forKey: "codexEnabled") }
     }
 
 
@@ -78,6 +109,24 @@ final class AppState {
         didSet { UserDefaults.standard.set(claudeSideBySide, forKey: "claudeSideBySide") }
     }
 
+    // Side-by-side layout for Gemini Session and Week usage rows
+    var geminiSideBySide: Bool {
+        didSet { UserDefaults.standard.set(geminiSideBySide, forKey: "geminiSideBySide") }
+    }
+
+    // Side-by-side layout for Codex Session and Week usage rows
+    var codexSideBySide: Bool {
+        didSet { UserDefaults.standard.set(codexSideBySide, forKey: "codexSideBySide") }
+    }
+
+    // Show the latest thread rows in each provider's card
+    var claudeShowLatestThread: Bool {
+        didSet { UserDefaults.standard.set(claudeShowLatestThread, forKey: "claudeShowLatestThread") }
+    }
+    var codexShowLatestThread: Bool {
+        didSet { UserDefaults.standard.set(codexShowLatestThread, forKey: "codexShowLatestThread") }
+    }
+
     // Graph display toggles for each provider
     var claudeShowGraph: Bool {
         didSet { UserDefaults.standard.set(claudeShowGraph, forKey: "claudeShowGraph") }
@@ -87,6 +136,12 @@ final class AppState {
     }
     var antigravityShowGraph: Bool {
         didSet { UserDefaults.standard.set(antigravityShowGraph, forKey: "antigravityShowGraph") }
+    }
+    var geminiShowGraph: Bool {
+        didSet { UserDefaults.standard.set(geminiShowGraph, forKey: "geminiShowGraph") }
+    }
+    var codexShowGraph: Bool {
+        didSet { UserDefaults.standard.set(codexShowGraph, forKey: "codexShowGraph") }
     }
 
     // Which window the menu bar donut reflects
@@ -161,6 +216,8 @@ final class AppState {
     var claudeError: String? = nil
     var deepseekError: String? = nil
     var antigravityError: String? = nil
+    var geminiError: String? = nil
+    var codexError: String? = nil
     
     // Antigravity Metrics
     var antigravityAvailable: Bool = false
@@ -192,12 +249,19 @@ final class AppState {
     var antigravityClaudeGptHistory: [String: Double] {
         didSet { UserDefaults.standard.set(antigravityClaudeGptHistory, forKey: "antigravityClaudeGptHistory") }
     }
+    var geminiHistory: [String: Double] {
+        didSet { UserDefaults.standard.set(geminiHistory, forKey: "geminiHistory") }
+    }
+    var codexHistory: [String: Double] {
+        didSet { UserDefaults.standard.set(codexHistory, forKey: "codexHistory") }
+    }
 
     // Baselines in memory for session delta calculation
     var lastClaudeSessionPercent: Double? = nil
     var lastDeepseekBalance: Double? = nil
     var lastAntigravityGeminiWeeklyRemaining: Double? = nil
     var lastAntigravityClaudeGptWeeklyRemaining: Double? = nil
+    var lastGeminiSessionPercent: Double? = nil
 
     init() {
         let defaults = UserDefaults.standard
@@ -205,13 +269,22 @@ final class AppState {
         self.claudeEnabled = defaults.object(forKey: "claudeEnabled") as? Bool ?? true
         self.deepseekEnabled = defaults.object(forKey: "deepseekEnabled") as? Bool ?? true
         self.antigravityEnabled = defaults.object(forKey: "antigravityEnabled") as? Bool ?? true
+        // Gemini is opt-in: it reads Chrome cookies and prompts for Keychain access.
+        self.geminiEnabled = defaults.object(forKey: "geminiEnabled") as? Bool ?? false
+        self.codexEnabled = defaults.object(forKey: "codexEnabled") as? Bool ?? true
 
         self.antigravityFusedGraph = defaults.object(forKey: "antigravityFusedGraph") as? Bool ?? false
         self.antigravitySideBySide = defaults.object(forKey: "antigravitySideBySide") as? Bool ?? false
         self.claudeSideBySide = defaults.object(forKey: "claudeSideBySide") as? Bool ?? false
+        self.geminiSideBySide = defaults.object(forKey: "geminiSideBySide") as? Bool ?? false
+        self.codexSideBySide = defaults.object(forKey: "codexSideBySide") as? Bool ?? false
+        self.claudeShowLatestThread = defaults.object(forKey: "claudeShowLatestThread") as? Bool ?? true
+        self.codexShowLatestThread = defaults.object(forKey: "codexShowLatestThread") as? Bool ?? true
         self.claudeShowGraph = defaults.object(forKey: "claudeShowGraph") as? Bool ?? true
         self.deepseekShowGraph = defaults.object(forKey: "deepseekShowGraph") as? Bool ?? true
         self.antigravityShowGraph = defaults.object(forKey: "antigravityShowGraph") as? Bool ?? true
+        self.geminiShowGraph = defaults.object(forKey: "geminiShowGraph") as? Bool ?? true
+        self.codexShowGraph = defaults.object(forKey: "codexShowGraph") as? Bool ?? true
         let win = defaults.string(forKey: "claudeWindow")
         self.claudeWindow = win.flatMap(ClaudeWindow.init(rawValue:)) ?? .session
         self.showRemaining = defaults.bool(forKey: "showRemaining")
@@ -222,7 +295,7 @@ final class AppState {
         let fdow = defaults.string(forKey: "firstDayOfWeek")
         self.firstDayOfWeek = fdow.flatMap(FirstDayOfWeek.init(rawValue:)) ?? .sunday
 
-        let defaultOrder = ["claude", "deepseek", "antigravity"]
+        let defaultOrder = ["claude", "deepseek", "antigravity", "gemini", "codex"]
         var order = defaults.stringArray(forKey: "providerOrder") ?? defaultOrder
         for provider in defaultOrder {
             if !order.contains(provider) {
@@ -249,11 +322,15 @@ final class AppState {
         self.deepseekHistory = defaults.dictionary(forKey: "deepseekHistory") as? [String: Double] ?? [:]
         self.antigravityGeminiHistory = defaults.dictionary(forKey: "antigravityGeminiHistory") as? [String: Double] ?? [:]
         self.antigravityClaudeGptHistory = defaults.dictionary(forKey: "antigravityClaudeGptHistory") as? [String: Double] ?? [:]
+        self.geminiHistory = defaults.dictionary(forKey: "geminiHistory") as? [String: Double] ?? [:]
+        self.codexHistory = defaults.dictionary(forKey: "codexHistory") as? [String: Double] ?? [:]
 
         let hasClaudeHistory = !self.claudeHistory.isEmpty
         let hasDeepseekHistory = !self.deepseekHistory.isEmpty
         let hasGeminiHistory = !self.antigravityGeminiHistory.isEmpty
         let hasClaudeGptHistory = !self.antigravityClaudeGptHistory.isEmpty
+        let hasGeminiWebHistory = !self.geminiHistory.isEmpty
+        let hasCodexHistory = !self.codexHistory.isEmpty
 
         if !hasClaudeHistory {
             self.claudeHistory = AppState.generateMockHistory(range: 10...60)
@@ -271,6 +348,14 @@ final class AppState {
             self.antigravityClaudeGptHistory = AppState.generateMockHistory(range: 10...70)
             defaults.set(self.antigravityClaudeGptHistory, forKey: "antigravityClaudeGptHistory")
         }
+        if !hasGeminiWebHistory {
+            self.geminiHistory = AppState.generateMockHistory(range: 10...60)
+            defaults.set(self.geminiHistory, forKey: "geminiHistory")
+        }
+        if !hasCodexHistory {
+            self.codexHistory = AppState.generateMockHistory(range: 20_000...180_000)
+            defaults.set(self.codexHistory, forKey: "codexHistory")
+        }
     }
 
     // MARK: - Active-window accessors
@@ -284,6 +369,13 @@ final class AppState {
 
     var claudeFraction: Double {
         let used = min(1.0, max(0, activePercent / 100))
+        return showRemaining ? (1.0 - used) : used
+    }
+
+    // Gemini stores % used (like Claude); the higher-pressure of its two windows.
+    var geminiFraction: Double {
+        let highestUsed = max(geminiSessionPercent, geminiWeekPercent)
+        let used = min(1.0, max(0, highestUsed / 100))
         return showRemaining ? (1.0 - used) : used
     }
 
@@ -389,24 +481,29 @@ final class AppState {
         deepseekHistory = deepseekHistory.filter { validKeys.contains($0.key) }
         antigravityGeminiHistory = antigravityGeminiHistory.filter { validKeys.contains($0.key) }
         antigravityClaudeGptHistory = antigravityClaudeGptHistory.filter { validKeys.contains($0.key) }
+        geminiHistory = geminiHistory.filter { validKeys.contains($0.key) }
+        codexHistory = codexHistory.filter { validKeys.contains($0.key) }
     }
 
     func trackUsageUpdate(
         claudeSession: Double?,
         deepseekBalance: Double?,
         geminiWeeklyRemaining: Double?,
-        claudeGptWeeklyRemaining: Double?
+        claudeGptWeeklyRemaining: Double?,
+        geminiWebSession: Double?
     ) -> Bool {
         var reduced = false
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         let todayKey = formatter.string(from: Date())
-        
+
         // Ensure today exists in all dictionaries
         if claudeHistory[todayKey] == nil { claudeHistory[todayKey] = 0.0 }
         if deepseekHistory[todayKey] == nil { deepseekHistory[todayKey] = 0.0 }
         if antigravityGeminiHistory[todayKey] == nil { antigravityGeminiHistory[todayKey] = 0.0 }
         if antigravityClaudeGptHistory[todayKey] == nil { antigravityClaudeGptHistory[todayKey] = 0.0 }
+        if geminiHistory[todayKey] == nil { geminiHistory[todayKey] = 0.0 }
+        if codexHistory[todayKey] == nil { codexHistory[todayKey] = 0.0 }
         
         // 1. Claude
         if let claudeSession {
@@ -455,7 +552,19 @@ final class AppState {
             }
             lastAntigravityClaudeGptWeeklyRemaining = claudeGptWeeklyRemaining
         }
-        
+
+        // 4. Gemini (consumer web) — stores % used, like Claude, so track increases.
+        if let geminiWebSession {
+            if let last = lastGeminiSessionPercent {
+                if geminiWebSession > last {
+                    let delta = geminiWebSession - last
+                    geminiHistory[todayKey] = (geminiHistory[todayKey] ?? 0.0) + delta
+                    reduced = true
+                }
+            }
+            lastGeminiSessionPercent = geminiWebSession
+        }
+
         pruneHistory()
         return reduced
     }

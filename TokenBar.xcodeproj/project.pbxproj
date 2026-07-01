@@ -17,6 +17,8 @@
 		TB0000000000000000000008 /* DeepSeekClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000108 /* DeepSeekClient.swift */; };
 		TB0000000000000000000009 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000109 /* KeychainHelper.swift */; };
 		TB000000000000000000000B /* AntigravityScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB000000000000000000010B /* AntigravityScanner.swift */; };
+		TB000000000000000000000E /* GeminiScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB000000000000000000010E /* GeminiScanner.swift */; };
+		TB000000000000000000000F /* CodexScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB000000000000000000010F /* CodexScanner.swift */; };
 		TB000000000000000000000C /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = TB000000000000000000010C /* AppIcon.icns */; };
 		TB000000000000000000000D /* UsageGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB000000000000000000010D /* UsageGraphView.swift */; };
 /* End PBXBuildFile section */
@@ -33,6 +35,8 @@
 		TB0000000000000000000108 /* DeepSeekClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepSeekClient.swift; sourceTree = "<group>"; };
 		TB0000000000000000000109 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		TB000000000000000000010B /* AntigravityScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AntigravityScanner.swift; sourceTree = "<group>"; };
+		TB000000000000000000010E /* GeminiScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeminiScanner.swift; sourceTree = "<group>"; };
+		TB000000000000000000010F /* CodexScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexScanner.swift; sourceTree = "<group>"; };
 		TB000000000000000000010A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		TB000000000000000000010C /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
 		TB000000000000000000010D /* UsageGraphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageGraphView.swift; sourceTree = "<group>"; };
@@ -79,6 +83,8 @@
 				TB0000000000000000000108 /* DeepSeekClient.swift */,
 				TB0000000000000000000109 /* KeychainHelper.swift */,
 				TB000000000000000000010B /* AntigravityScanner.swift */,
+				TB000000000000000000010E /* GeminiScanner.swift */,
+				TB000000000000000000010F /* CodexScanner.swift */,
 				TB000000000000000000010A /* Info.plist */,
 				TB000000000000000000010C /* AppIcon.icns */,
 				TB000000000000000000010D /* UsageGraphView.swift */,
@@ -176,6 +182,8 @@
 				TB0000000000000000000008 /* DeepSeekClient.swift in Sources */,
 				TB0000000000000000000009 /* KeychainHelper.swift in Sources */,
 				TB000000000000000000000B /* AntigravityScanner.swift in Sources */,
+				TB000000000000000000000E /* GeminiScanner.swift in Sources */,
+				TB000000000000000000000F /* CodexScanner.swift in Sources */,
 				TB000000000000000000000D /* UsageGraphView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -28,9 +28,14 @@ Modern development increasingly runs on metered AI services, yet usage and balan
 - Dynamically trims transparent boundaries so the menu item sits perfectly flush within the menu bar.
 
 ### Multi-Provider Tracking
-- **Claude (Anthropic API):** Monitor official session and weekly utilization limits, with your active quota window presented in a meticulously designed metrics card.
+- **Claude (Anthropic API):** Monitor official session and weekly utilization limits, with your active quota window presented in a metrics card. Also tracks **Latest Threads** from local Claude Code session files with real-time status indicators (e.g., coding, done, idle).
+- **Codex:** Summarize local Codex thread token usage for today and the last 7 days. Also monitors your **Latest Threads** read from your local Codex database with status indicators.
 - **DeepSeek:** Track your platform API balance (USD/CNY) in a clean, centered layout — with optional live conversion to Thai Baht (฿) using European Central Bank reference rates via the Frankfurter API.
 - **Antigravity:** Follow remaining quotas and reset times across Gemini, Claude, and GPT models.
+
+### Latest Threads Tracking
+- **Real-Time Status Monitoring:** Automatically watches active development threads for Claude and Codex, displaying the latest thread titles and active status directly in their respective cards.
+- **Dynamic Coding Indicators:** Shows visual status dots (orange for active coding sessions, green for completed runs, and secondary color for idle threads) so you always know which sessions are currently drawing tokens.
 
 ### Side-by-Side Multi-Column Layout
 - Enable **Side-by-Side** views for the Claude and Antigravity sections to display Session and Weekly limits in parallel columns.
@@ -91,6 +96,9 @@ Enter your DeepSeek API key (`sk-...`) in the **DeepSeek** tab of Settings. Your
 
 ### Antigravity
 Connects to your local Antigravity instance on its default ports to query session and weekly limits for Gemini, Claude, and GPT models.
+
+### Codex
+Reads local thread token totals from `~/.codex/state_5.sqlite` and limit/reset lockout messages from local Codex logs. No API key or network request is required.
 
 ---
 
