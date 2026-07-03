@@ -2,7 +2,9 @@ import SwiftUI
 
 struct UsageGraphView: View {
     let history: [String: Double]
+    let history2: [String: Double]?
     let tintColor: Color
+    let tintColor2: Color?
     let unitFormatter: (Double) -> String
     let yAxisMax: Double
     let showTotal: Bool
@@ -13,14 +15,18 @@ struct UsageGraphView: View {
     
     init(
         history: [String: Double],
+        history2: [String: Double]? = nil,
         tintColor: Color,
+        tintColor2: Color? = nil,
         unitFormatter: @escaping (Double) -> String,
         yAxisMax: Double,
         showTotal: Bool = true,
         firstDayOfWeek: FirstDayOfWeek = .sunday
     ) {
         self.history = history
+        self.history2 = history2
         self.tintColor = tintColor
+        self.tintColor2 = tintColor2
         self.unitFormatter = unitFormatter
         self.yAxisMax = yAxisMax
         self.showTotal = showTotal
@@ -54,7 +60,11 @@ struct UsageGraphView: View {
     }
     
     private var maxValue: Double {
-        let maxInHistory = last7DaysData.map { $0.value }.max() ?? 0.0
+        let maxInHistory = last7DaysData.map { item -> Double in
+            let val1 = item.value
+            let val2 = history2?[item.dateString] ?? 0.0
+            return val1 + val2
+        }.max() ?? 0.0
         return max(yAxisMax, maxInHistory > 0 ? maxInHistory : yAxisMax)
     }
     
@@ -73,11 +83,15 @@ struct UsageGraphView: View {
                 Spacer()
                 if let hoveredIndex, hoveredIndex < last7DaysData.count {
                     let item = last7DaysData[hoveredIndex]
-                    Text(unitFormatter(item.value))
+                    let val1 = item.value
+                    let val2 = history2?[item.dateString] ?? 0.0
+                    Text(unitFormatter(val1 + val2))
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
                         .foregroundStyle(tintColor)
                 } else if showTotal {
-                    let total = last7DaysData.reduce(0) { $0 + $1.value }
+                    let total = last7DaysData.reduce(0.0) { sum, item in
+                        sum + item.value + (history2?[item.dateString] ?? 0.0)
+                    }
                     Text(unitFormatter(total))
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -87,20 +101,33 @@ struct UsageGraphView: View {
             HStack(alignment: .bottom, spacing: 12) {
                 ForEach(0..<last7DaysData.count, id: \.self) { index in
                     let item = last7DaysData[index]
-                    let fraction = maxValue > 0 ? (item.value / maxValue) : 0.0
+                    let val1 = item.value
+                    let val2 = history2?[item.dateString] ?? 0.0
+                    let fraction1 = maxValue > 0 ? (val1 / maxValue) : 0.0
+                    let fraction2 = maxValue > 0 ? (val2 / maxValue) : 0.0
                     let isToday = item.dateString == todayString
                     
                     VStack(spacing: 4) {
                         GeometryReader { geo in
                             VStack(spacing: 0) {
                                 Spacer(minLength: 0)
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(tintColor)
-                                    .frame(width: 12)
-                                    .frame(height: animate ? CGFloat(fraction) * geo.size.height : 0)
-                                    .scaleEffect(hoveredIndex == index ? 1.08 : 1.0, anchor: .bottom)
-                                    .shadow(color: tintColor.opacity(hoveredIndex == index ? 0.3 : 0), radius: 3, x: 0, y: -1)
+                                if let tintColor2, val2 > 0 {
+                                    Rectangle()
+                                        .fill(tintColor2)
+                                        .frame(width: 12)
+                                        .frame(height: animate ? CGFloat(fraction2) * geo.size.height : 0)
+                                }
+                                if val1 > 0 {
+                                    Rectangle()
+                                        .fill(tintColor)
+                                        .frame(width: 12)
+                                        .frame(height: animate ? CGFloat(fraction1) * geo.size.height : 0)
+                                }
                             }
+                            .frame(width: 12)
+                            .cornerRadius(2)
+                            .scaleEffect(hoveredIndex == index ? 1.08 : 1.0, anchor: .bottom)
+                            .shadow(color: (hoveredIndex == index ? (val1 > 0 ? tintColor : (tintColor2 ?? tintColor)) : Color.clear).opacity(0.3), radius: 3, x: 0, y: -1)
                             .frame(maxWidth: .infinity)
                         }
                         .frame(height: 50)

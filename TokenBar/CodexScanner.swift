@@ -75,6 +75,10 @@ enum CodexScanner {
             sqlite3_close(db)
         }
 
+        // Rollout files carry the per-thread turn events the status is read from;
+        // index them once per scan (only the displayed threads consult it).
+        let rollouts = rolloutIndex()
+
         while sqlite3_step(stmt) == SQLITE_ROW {
             sawRows = true
             let id = sqlite3_column_text(stmt, 0).map { String(cString: $0) } ?? UUID().uuidString
@@ -84,7 +88,12 @@ enum CodexScanner {
             let updatedAt = Date(timeIntervalSince1970: updatedMs / 1000.0)
             let model = sqlite3_column_text(stmt, 4).map { String(cString: $0) } ?? ""
             let archived = sqlite3_column_int(stmt, 5) != 0
-            let status = threadStatus(updatedAt: updatedAt, archived: archived, now: now)
+            // Only the threads that end up on screen (the first 3 rows) need a real
+            // status; later rows are only accumulated into the history buckets.
+            let status = latestThreads.count < 3
+                ? threadStatus(signal: rolloutTurnSignal(threadID: id, rollouts: rollouts),
+                               archived: archived, updatedAt: updatedAt, now: now)
+                : "idle"
             let thread = CodexThreadUsage(id: id,
                                           title: title.isEmpty ? "Untitled" : title,
                                           tokens: tokens,
@@ -182,17 +191,79 @@ enum CodexScanner {
                        flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_URI)
     }
 
-    /// A thread is "coding" only while it currently has activity (touched within
-    /// the last minute); once updates stop it's immediately "done", and after
-    /// ~5 minutes of no activity it falls back to "idle".
-    private static let codingWindow: TimeInterval = 60    // active right now
-    private static let idleWindow: TimeInterval = 300     // no activity for 5 min
+    /// Status comes from the thread's rollout log (see `rolloutTurnSignal`): a turn
+    /// in flight is "coding" until the log goes silent long enough to assume the CLI
+    /// was killed, a completed turn is "done" until it ages into "idle", and an
+    /// archived thread is always "idle" — the user explicitly closed it.
+    private static func threadStatus(signal: TurnSignal, archived: Bool,
+                                     updatedAt: Date, now: Date) -> String {
+        if archived { return "idle" }
+        return TurnSignal.status(signal, updatedAt: updatedAt, now: now)
+    }
 
-    private static func threadStatus(updatedAt: Date, archived: Bool, now: Date) -> String {
-        let elapsed = now.timeIntervalSince(updatedAt)
-        if !archived && elapsed <= codingWindow { return "coding" }
-        if elapsed <= idleWindow { return "done" }
-        return "idle"
+    /// Maps thread id → its rollout file. Rollouts live at
+    /// ~/.codex/sessions/YYYY/MM/DD/rollout-<started-at>-<thread-id>.jsonl; a thread
+    /// can be updated days after it started, so the whole tree is indexed rather
+    /// than guessing a date directory from `updated_at`.
+    private static func rolloutIndex() -> [String: URL] {
+        let sessionsDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/sessions")
+        guard let enumerator = FileManager.default.enumerator(
+            at: sessionsDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return [:] }
+
+        var index: [String: URL] = [:]
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            let base = url.deletingPathExtension().lastPathComponent
+            guard base.hasPrefix("rollout-"), base.count > 36 else { continue }
+            let id = String(base.suffix(36))
+            index[id] = url
+        }
+        return index
+    }
+
+    /// Reads the last event from a thread's rollout to tell whether a turn is in
+    /// flight. Codex closes every turn with an `event_msg` of type `task_complete`
+    /// (or `turn_aborted` on interrupt); while working, the log tail is
+    /// `response_item` records (function calls/outputs, reasoning, messages) and
+    /// progress events instead.
+    private static func rolloutTurnSignal(threadID: String, rollouts: [String: URL]) -> TurnSignal {
+        guard let url = rollouts[threadID],
+              let handle = try? FileHandle(forReadingFrom: url) else { return .unknown }
+        defer { try? handle.close() }
+
+        let window: UInt64 = 64 * 1024
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return .unknown }
+
+        // Walk backwards so a trailing partial line (mid-write) is skipped naturally
+        // by the JSON parse failing.
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
+            guard let lineData = line.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  let type = obj["type"] as? String else { continue }
+            switch type {
+            case "event_msg":
+                let payload = (obj["payload"] as? [String: Any])?["type"] as? String
+                switch payload {
+                case "task_complete", "turn_aborted", "error", "shutdown_complete":
+                    return .finished
+                default:
+                    return .working   // task_started, agent_message, token_count, …
+                }
+            case "response_item", "turn_context":
+                return .working
+            case "session_meta":
+                return .unknown       // brand-new session, no turn yet
+            default:
+                continue              // unrecognized bookkeeping — keep looking
+            }
+        }
+        return .unknown
     }
 
     private static func readLimitStatus() -> (isLimited: Bool, resetAt: Date?) {

@@ -123,6 +123,9 @@ final class AppState {
     var claudeShowLatestThread: Bool {
         didSet { UserDefaults.standard.set(claudeShowLatestThread, forKey: "claudeShowLatestThread") }
     }
+    var antigravityShowLatestThread: Bool {
+        didSet { UserDefaults.standard.set(antigravityShowLatestThread, forKey: "antigravityShowLatestThread") }
+    }
     var codexShowLatestThread: Bool {
         didSet { UserDefaults.standard.set(codexShowLatestThread, forKey: "codexShowLatestThread") }
     }
@@ -159,6 +162,11 @@ final class AppState {
         didSet { UserDefaults.standard.set(showReductionIndicator, forKey: "showReductionIndicator") }
     }
 
+    // Whether to notify when a known usage-limit reset time arrives.
+    var limitResetNotificationsEnabled: Bool {
+        didSet { UserDefaults.standard.set(limitResetNotificationsEnabled, forKey: "limitResetNotificationsEnabled") }
+    }
+
     // Whether to use highest token for each provider as the max height reference separately
     var useSeparateGraphScale: Bool {
         didSet { UserDefaults.standard.set(useSeparateGraphScale, forKey: "useSeparateGraphScale") }
@@ -193,6 +201,9 @@ final class AppState {
     // DeepSeek
     var deepseekBalance: Double? = nil
     var deepseekCurrency: String = "USD"
+    var deepseekAvailable: Bool {
+        deepseekBalance != nil
+    }
     var deepseekApiKey: String {
         didSet { KeychainHelper.save(deepseekApiKey, key: "deepseekApiKey") }
     }
@@ -221,7 +232,8 @@ final class AppState {
     
     // Antigravity Metrics
     var antigravityAvailable: Bool = false
-    
+    var antigravityLatestThreads: [AntigravityThreadUsage] = []
+
     var antigravityGeminiWeeklyRemainingPercent: Double = 100
     var antigravityGeminiWeeklyResetAt: Date? = nil
     var antigravityGeminiWeeklyDescription: String = ""
@@ -235,6 +247,33 @@ final class AppState {
     var antigravityClaudeGpt5hRemainingPercent: Double = 100
     var antigravityClaudeGpt5hResetAt: Date? = nil
     var antigravityClaudeGpt5hDescription: String = ""
+
+    // Computed properties for UI (MenuView) mapping remaining to used percentage
+    var antigravityGeminiSessionPercent: Double {
+        100.0 - antigravityGemini5hRemainingPercent
+    }
+    var antigravityGeminiSessionResetAt: Date? {
+        antigravityGemini5hResetAt
+    }
+    var antigravityGeminiWeekPercent: Double {
+        100.0 - antigravityGeminiWeeklyRemainingPercent
+    }
+    var antigravityGeminiWeekResetAt: Date? {
+        antigravityGeminiWeeklyResetAt
+    }
+
+    var antigravityClaudeGptSessionPercent: Double {
+        100.0 - antigravityClaudeGpt5hRemainingPercent
+    }
+    var antigravityClaudeGptSessionResetAt: Date? {
+        antigravityClaudeGpt5hResetAt
+    }
+    var antigravityClaudeGptWeekPercent: Double {
+        100.0 - antigravityClaudeGptWeeklyRemainingPercent
+    }
+    var antigravityClaudeGptWeekResetAt: Date? {
+        antigravityClaudeGptWeeklyResetAt
+    }
 
     // 7-day usage tracking dictionaries (dateString -> value)
     var claudeHistory: [String: Double] {
@@ -279,6 +318,7 @@ final class AppState {
         self.geminiSideBySide = defaults.object(forKey: "geminiSideBySide") as? Bool ?? false
         self.codexSideBySide = defaults.object(forKey: "codexSideBySide") as? Bool ?? false
         self.claudeShowLatestThread = defaults.object(forKey: "claudeShowLatestThread") as? Bool ?? true
+        self.antigravityShowLatestThread = defaults.object(forKey: "antigravityShowLatestThread") as? Bool ?? true
         self.codexShowLatestThread = defaults.object(forKey: "codexShowLatestThread") as? Bool ?? true
         self.claudeShowGraph = defaults.object(forKey: "claudeShowGraph") as? Bool ?? true
         self.deepseekShowGraph = defaults.object(forKey: "deepseekShowGraph") as? Bool ?? true
@@ -289,6 +329,7 @@ final class AppState {
         self.claudeWindow = win.flatMap(ClaudeWindow.init(rawValue:)) ?? .session
         self.showRemaining = defaults.bool(forKey: "showRemaining")
         self.showReductionIndicator = defaults.object(forKey: "showReductionIndicator") as? Bool ?? true
+        self.limitResetNotificationsEnabled = defaults.object(forKey: "limitResetNotificationsEnabled") as? Bool ?? true
         self.useSeparateGraphScale = defaults.bool(forKey: "useSeparateGraphScale")
         self.refreshInterval = (defaults.object(forKey: "refreshInterval") as? Int)
             .flatMap(RefreshInterval.init(rawValue:)) ?? .m1
@@ -396,9 +437,7 @@ final class AppState {
 
     var claudePercentFormatted: String {
         let percent = showRemaining ? (100.0 - activePercent) : activePercent
-        return percent < 1 && percent > 0
-            ? String(format: "%.1f%%", percent)
-            : "\(Int(percent.rounded()))%"
+        return "\(Int(percent.rounded()))%"
     }
 
     // MARK: - DeepSeek display (THB conversion)

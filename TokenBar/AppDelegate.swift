@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
+@preconcurrency import UserNotifications
 
+private let limitResetNotificationPrefix = "TokenBar.limitReset."
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -165,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func applySettingsLive() {
         renderIcon()
         startPollTimer()
+        reconcileLimitResetNotifications()
         Task { await refresh() }
     }
 
@@ -247,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if scanAntigravity {
             if let ag = antigravityOpt {
                 state.antigravityAvailable = ag.available
+                state.antigravityLatestThreads = ag.latestThreads
                 state.antigravityGeminiWeeklyRemainingPercent = ag.gemini.weekly.remainingPercent
                 state.antigravityGeminiWeeklyResetAt = ag.gemini.weekly.resetAt
                 state.antigravityGeminiWeeklyDescription = ag.gemini.weekly.description
@@ -307,6 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         state.isLoading = false
         state.lastRefreshed = Date()
+        reconcileLimitResetNotifications()
         renderIcon()
     }
 
@@ -416,6 +421,224 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             state.codexLatestThreads = []
             state.codexError = codex.error
         }
+    }
+
+    private struct LimitResetNotification {
+        let providerID: String
+        let providerName: String
+        let windowID: String
+        let windowName: String
+        let resetAt: Date
+
+        var identifier: String {
+            let timestamp = Int(resetAt.timeIntervalSince1970)
+            return "\(limitResetNotificationPrefix)\(providerID).\(windowID).\(timestamp)"
+        }
+
+        var title: String {
+            "\(providerName) \(windowName) limit reset"
+        }
+
+        var body: String {
+            "Your \(providerName) \(windowName.lowercased()) limit should be available again."
+        }
+    }
+
+    private func reconcileLimitResetNotifications() {
+        guard state.limitResetNotificationsEnabled else {
+            Self.removePendingLimitResetNotifications()
+            return
+        }
+
+        let notifications = currentLimitResetNotifications()
+        guard !notifications.isEmpty else {
+            Self.removePendingLimitResetNotifications()
+            return
+        }
+
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                Self.syncPendingLimitResetNotifications(notifications)
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    guard granted else { return }
+                    Self.syncPendingLimitResetNotifications(notifications)
+                }
+            case .denied:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private nonisolated static func syncPendingLimitResetNotifications(_ notifications: [LimitResetNotification]) {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let desiredIDs = Set(notifications.map(\.identifier))
+            let existingIDs = Set(
+                requests
+                    .map(\.identifier)
+                    .filter { $0.hasPrefix(limitResetNotificationPrefix) }
+            )
+            let staleIDs = existingIDs.subtracting(desiredIDs)
+            if !staleIDs.isEmpty {
+                center.removePendingNotificationRequests(withIdentifiers: Array(staleIDs))
+            }
+
+            for notification in notifications where !existingIDs.contains(notification.identifier) {
+                let interval = notification.resetAt.timeIntervalSinceNow
+                guard interval > 1 else { continue }
+
+                let content = UNMutableNotificationContent()
+                content.title = notification.title
+                content.body = notification.body
+                content.sound = .default
+
+                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+                let request = UNNotificationRequest(
+                    identifier: notification.identifier,
+                    content: content,
+                    trigger: trigger
+                )
+                center.add(request)
+            }
+        }
+    }
+
+    private nonisolated static func removePendingLimitResetNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let ids = requests
+                .map(\.identifier)
+                .filter { $0.hasPrefix(limitResetNotificationPrefix) }
+            guard !ids.isEmpty else { return }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+    }
+
+    private func currentLimitResetNotifications() -> [LimitResetNotification] {
+        let minimumLeadTime: TimeInterval = 5
+        let now = Date()
+        var notifications: [LimitResetNotification] = []
+
+        func append(
+            enabled: Bool,
+            available: Bool,
+            providerID: String,
+            providerName: String,
+            windowID: String,
+            windowName: String,
+            resetAt: Date?
+        ) {
+            guard enabled,
+                  available,
+                  let resetAt,
+                  resetAt.timeIntervalSince(now) > minimumLeadTime else { return }
+            notifications.append(
+                LimitResetNotification(
+                    providerID: providerID,
+                    providerName: providerName,
+                    windowID: windowID,
+                    windowName: windowName,
+                    resetAt: resetAt
+                )
+            )
+        }
+
+        append(
+            enabled: state.claudeEnabled,
+            available: state.claudeAvailable,
+            providerID: "claude",
+            providerName: "Claude",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.claudeSessionResetAt
+        )
+        append(
+            enabled: state.claudeEnabled,
+            available: state.claudeAvailable,
+            providerID: "claude",
+            providerName: "Claude",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.claudeWeekResetAt
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-gemini",
+            providerName: "Antigravity Gemini",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.antigravityGeminiSessionResetAt
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-gemini",
+            providerName: "Antigravity Gemini",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.antigravityGeminiWeekResetAt
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-claude-gpt",
+            providerName: "Antigravity Claude/GPT",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.antigravityClaudeGptSessionResetAt
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-claude-gpt",
+            providerName: "Antigravity Claude/GPT",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.antigravityClaudeGptWeekResetAt
+        )
+        append(
+            enabled: state.geminiEnabled,
+            available: state.geminiAvailable,
+            providerID: "gemini",
+            providerName: "Gemini",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.geminiSessionResetAt
+        )
+        append(
+            enabled: state.geminiEnabled,
+            available: state.geminiAvailable,
+            providerID: "gemini",
+            providerName: "Gemini",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.geminiWeekResetAt
+        )
+        append(
+            enabled: state.codexEnabled,
+            available: state.codexAvailable,
+            providerID: "codex",
+            providerName: "Codex",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.codexSessionResetAt
+        )
+        append(
+            enabled: state.codexEnabled,
+            available: state.codexAvailable,
+            providerID: "codex",
+            providerName: "Codex",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.codexWeekResetAt
+        )
+
+        return notifications
     }
 
 }

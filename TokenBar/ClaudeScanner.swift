@@ -22,6 +22,40 @@ struct ClaudeThreadUsage {
     var status: String = "idle"
 }
 
+// What a session log says its last turn was doing. Shared by the Claude and
+// Codex scanners: both derive it from the tail of the session's JSONL file, then
+// map it to a coding/done/idle status with the file's last-modified time acting
+// only as a staleness guard (a killed CLI leaves a mid-turn log behind forever).
+enum TurnSignal {
+    case working    // a turn is in flight — prompt sent, tools running, response streaming
+    case finished   // the last turn completed (or was interrupted) — waiting on the user
+    case unknown    // no classifiable record found; fall back to the time heuristic
+
+    // A turn in flight can legitimately go quiet for a while (a long build or test
+    // run writes nothing), so "coding" survives up to 10 min of log silence. A
+    // finished turn shows "done" for 5 min, then fades to "idle".
+    static let codingStaleCutoff: TimeInterval = 600
+    static let doneWindow: TimeInterval = 300
+
+    // Legacy time-only thresholds, used when the log tail couldn't be classified.
+    static let fallbackCodingWindow: TimeInterval = 60
+    static let fallbackIdleWindow: TimeInterval = 300
+
+    static func status(_ signal: TurnSignal, updatedAt: Date, now: Date) -> String {
+        let elapsed = now.timeIntervalSince(updatedAt)
+        switch signal {
+        case .working:
+            return elapsed <= codingStaleCutoff ? "coding" : "idle"
+        case .finished:
+            return elapsed <= doneWindow ? "done" : "idle"
+        case .unknown:
+            if elapsed <= fallbackCodingWindow { return "coding" }
+            if elapsed <= fallbackIdleWindow { return "done" }
+            return "idle"
+        }
+    }
+}
+
 struct ClaudeUsage {
     var available: Bool = false
     var sessionPercent: Double = 0      // five_hour utilization (0–100)
@@ -111,25 +145,24 @@ enum ClaudeScanner {
     // ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl. There's no usage API for
     // these, so the "Latest Threads" list is built from the newest session files:
     // title from the generated `ai-title` line, last activity from the file's
-    // modification time, and a coding/done/idle status derived from that (mirroring
-    // Codex).
+    // modification time, and a coding/done/idle status read from the log itself —
+    // a turn in flight ends in tool calls/results, a finished turn ends in an
+    // assistant record with stop_reason "end_turn".
     private static let projectsDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/projects")
-
-    private static let codingWindow: TimeInterval = 60    // active right now
-    private static let idleWindow: TimeInterval = 300     // no activity for 5 min
 
     static func latestThreads(limit: Int = 3, now: Date = Date()) -> [ClaudeThreadUsage] {
         var threads: [ClaudeThreadUsage] = []
         // Pull extra candidates since some session files (sub-agents / brand-new
         // sessions) have no usable title and get skipped.
         for file in recentSessionFiles(candidates: limit * 4) {
-            guard let title = sessionTitle(file.url) else { continue }
+            let info = sessionInfo(file.url)
+            guard let title = info.title else { continue }
             threads.append(ClaudeThreadUsage(
                 id: file.url.deletingPathExtension().lastPathComponent,
                 title: title,
                 updatedAt: file.modified,
-                status: threadStatus(updatedAt: file.modified, now: now)
+                status: TurnSignal.status(info.signal, updatedAt: file.modified, now: now)
             ))
             if threads.count >= limit { break }
         }
@@ -154,27 +187,30 @@ enum ClaudeScanner {
 
     // Reads a bounded window from the END of a session file to find the latest
     // `ai-title` (regenerated near the tail as the conversation grows), falling back
-    // to the first real user message when the whole file fits in the window. Bounded
-    // so multi-MB session files aren't loaded in full every scan.
-    private static func sessionTitle(_ url: URL) -> String? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    // to the first real user message when the whole file fits in the window, plus
+    // the last conversation record so the thread status reflects what actually
+    // happened rather than just when the file was touched. Bounded so multi-MB
+    // session files aren't loaded in full every scan.
+    private static func sessionInfo(_ url: URL) -> (title: String?, signal: TurnSignal) {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return (nil, .unknown) }
         defer { try? handle.close() }
 
         let window: UInt64 = 256 * 1024
         let size = (try? handle.seekToEnd()) ?? 0
         let start = size > window ? size - window : 0
         try? handle.seek(toOffset: start)
-        guard var data = try? handle.readToEnd() else { return nil }
+        guard var data = try? handle.readToEnd() else { return (nil, .unknown) }
 
         // When we started mid-file, drop the partial first line so decoding begins on
         // a clean line / UTF-8 boundary.
         if start > 0, let newline = data.firstIndex(of: 0x0A) {
             data = Data(data[(newline + 1)...])
         }
-        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        guard let text = String(data: data, encoding: .utf8) else { return (nil, .unknown) }
 
         var aiTitle: String?
         var firstUserText: String?
+        var lastRecord: Substring?
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             if line.contains("ai-title") {
                 if let obj = jsonObject(line),
@@ -184,17 +220,53 @@ enum ClaudeScanner {
                    !value.isEmpty {
                     aiTitle = value
                 }
-            } else if start == 0, firstUserText == nil, line.contains("\"type\":\"user\"") {
-                // Only meaningful when the whole file is in the window (small/new
-                // sessions); large files always have an ai-title.
-                if let obj = jsonObject(line), let value = userText(obj) {
-                    firstUserText = value
+            } else if line.contains("\"type\":\"user\"") || line.contains("\"type\":\"assistant\"") {
+                // Conversation records (prompts, tool calls/results, responses) — the
+                // last one tells whether a turn is still in flight. Bookkeeping lines
+                // (ai-title, last-prompt, mode, attachments, …) are skipped.
+                lastRecord = line
+                if start == 0, firstUserText == nil, line.contains("\"type\":\"user\"") {
+                    // Only meaningful when the whole file is in the window (small/new
+                    // sessions); large files always have an ai-title.
+                    if let obj = jsonObject(line), let value = userText(obj) {
+                        firstUserText = value
+                    }
                 }
             }
         }
 
         let title = aiTitle ?? firstUserText
-        return title.map { String($0.prefix(80)) }
+        return (title.map { String($0.prefix(80)) }, turnSignal(from: lastRecord))
+    }
+
+    // Classifies the last conversation record of a session log. A finished turn
+    // ends with an assistant record whose stop_reason is "end_turn" (or
+    // "stop_sequence"), and an interrupt leaves a "[Request interrupted …]" user
+    // record; anything else (fresh prompt, tool_use, tool_result, streaming text)
+    // means Claude is mid-turn.
+    private static func turnSignal(from line: Substring?) -> TurnSignal {
+        guard let line, let obj = jsonObject(line) else { return .unknown }
+        switch obj["type"] as? String {
+        case "assistant":
+            let stop = (obj["message"] as? [String: Any])?["stop_reason"] as? String
+            switch stop {
+            case "end_turn", "stop_sequence": return .finished
+            default: return .working
+            }
+        case "user":
+            if let message = obj["message"] as? [String: Any],
+               let blocks = message["content"] as? [[String: Any]],
+               blocks.contains(where: {
+                   ($0["type"] as? String) == "text" &&
+                   (($0["text"] as? String)?.hasPrefix("[Request interrupted") ?? false)
+               }) {
+                return .finished
+            }
+            return .working
+        default:
+            // The type substring matched inside embedded content, not a real record.
+            return .unknown
+        }
     }
 
     private static func jsonObject(_ line: Substring) -> [String: Any]? {
@@ -216,13 +288,6 @@ enum ClaudeScanner {
               !value.isEmpty,
               !value.hasPrefix("<") else { return nil }   // skip <command-…> / tool wrappers
         return value
-    }
-
-    private static func threadStatus(updatedAt: Date, now: Date) -> String {
-        let elapsed = now.timeIntervalSince(updatedAt)
-        if elapsed <= codingWindow { return "coding" }
-        if elapsed <= idleWindow { return "done" }
-        return "idle"
     }
 
     // MARK: - Independent OAuth login

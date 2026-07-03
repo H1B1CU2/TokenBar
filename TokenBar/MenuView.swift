@@ -169,12 +169,12 @@ struct MenuView: View {
                 Spacer()
             }
 
-            if state.deepseekAvailable {
+            if let balance = state.deepseekDisplayBalance {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Balance Left")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Text(state.deepseekDisplayBalance)
+                    Text(balanceDisplay(balance, currency: state.deepseekDisplayCurrency))
                         .font(.system(size: 18, weight: .bold, design: .monospaced))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -231,6 +231,32 @@ struct MenuView: View {
                 Text("Connecting to Antigravity…")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+            }
+
+            if state.antigravityShowLatestThread && !state.antigravityLatestThreads.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Latest Threads")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    ForEach(state.antigravityLatestThreads, id: \.id) { thread in
+                        HStack(spacing: 6) {
+                            Text(thread.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 6)
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(threadStatusColor(thread.status))
+                                    .frame(width: 5, height: 5)
+                                Text(thread.status)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .fixedSize()
+                        }
+                    }
+                }
+                .padding(.top, 2)
             }
 
             if state.antigravityAvailable && state.antigravityShowGraph {
@@ -398,17 +424,13 @@ struct MenuView: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
             progressBar(displayFraction, color: .geminiAccent)
-            HStack(spacing: 6) {
-                Text("\(percentText(displayPercent)) \(suffix)")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                Spacer()
-                if let resetStr = resetText(reset, compact: state.geminiSideBySide) {
-                    Text(resetStr)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            usageFooterRow(
+                displayPercent: displayPercent,
+                suffix: suffix,
+                reset: reset,
+                compact: state.geminiSideBySide,
+                isSession: title == "Session"
+            )
         }
     }
 
@@ -423,17 +445,13 @@ struct MenuView: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
             progressBar(displayFraction, color: .codexAccent)
-            HStack(spacing: 6) {
-                Text("\(percentText(displayPercent)) \(suffix)")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                Spacer()
-                if let resetStr = resetText(reset, compact: state.codexSideBySide) {
-                    Text(resetStr)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            usageFooterRow(
+                displayPercent: displayPercent,
+                suffix: suffix,
+                reset: reset,
+                compact: state.codexSideBySide,
+                isSession: title == "Session"
+            )
         }
     }
 
@@ -563,17 +581,13 @@ struct MenuView: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
             progressBar(displayFraction, color: accentColor)
-            HStack(spacing: 6) {
-                Text("\(percentText(displayPercent)) \(suffix)")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                Spacer()
-                if let resetStr = resetText(reset, compact: state.antigravitySideBySide) {
-                    Text(resetStr)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            usageFooterRow(
+                displayPercent: displayPercent,
+                suffix: suffix,
+                reset: reset,
+                compact: state.antigravitySideBySide,
+                isSession: title == "Session"
+            )
         }
     }
 
@@ -590,17 +604,13 @@ struct MenuView: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
             progressBar(displayFraction, color: .claudeAccent)
-            HStack(spacing: 6) {
-                Text("\(percentText(displayPercent)) \(suffix)")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                Spacer()
-                if let resetStr = resetText(reset, compact: state.claudeSideBySide) {
-                    Text(resetStr)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
+            usageFooterRow(
+                displayPercent: displayPercent,
+                suffix: suffix,
+                reset: reset,
+                compact: state.claudeSideBySide,
+                isSession: title == "Session"
+            )
         }
     }
 
@@ -616,6 +626,37 @@ struct MenuView: View {
             }
         }
         .frame(height: 4)
+    }
+
+    private func usageFooterRow(
+        displayPercent: Double,
+        suffix: String,
+        reset: Date?,
+        compact: Bool,
+        isSession: Bool
+    ) -> some View {
+        let normalizedPercent = normalizedUsageDisplayPercent(displayPercent)
+        let shouldShowReset = !isUsageWindowFull(displayPercent)
+
+        return HStack(spacing: 4) {
+            Text("\(percentText(normalizedPercent)) \(suffix)")
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
+            Spacer(minLength: 4)
+            if shouldShowReset,
+               let resetStr = resetText(reset, compact: compact, showDuration: isSession) {
+                Text(resetStr)
+                    .font(.system(size: isSession ? 9.5 : 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .truncationMode(.tail)
+                    .allowsTightening(true)
+            }
+        }
     }
 
     private var footerButtons: some View {
@@ -670,6 +711,15 @@ struct MenuView: View {
         return String(format: "%.0f%%", percent)
     }
 
+    private func normalizedUsageDisplayPercent(_ percent: Double) -> Double {
+        guard isUsageWindowFull(percent) else { return percent }
+        return state.showRemaining ? 100 : 0
+    }
+
+    private func isUsageWindowFull(_ percent: Double) -> Bool {
+        state.showRemaining ? percent >= 99 : percent <= 1
+    }
+
     private func formatTokens(_ value: Double) -> String {
         if value >= 1_000_000 {
             return String(format: "%.1fM", value / 1_000_000.0)
@@ -680,8 +730,15 @@ struct MenuView: View {
         }
     }
 
-    private func resetText(_ date: Date?, compact: Bool) -> String? {
+    private func balanceDisplay(_ balance: Double, currency: String) -> String {
+        String(format: "%@%.2f", CurrencyFormat.symbol(currency), balance)
+    }
+
+    private func resetText(_ date: Date?, compact: Bool, showDuration: Bool = false) -> String? {
         guard let date else { return nil }
+        if showDuration {
+            return "in \(resetDurationText(until: date))"
+        }
         let formatter = DateFormatter()
         if Calendar.current.isDateInToday(date) {
             formatter.dateFormat = "HH:mm"
@@ -690,6 +747,13 @@ struct MenuView: View {
             formatter.dateFormat = compact ? "E HH:mm" : "EEEE HH:mm"
             return formatter.string(from: date)
         }
+    }
+
+    private func resetDurationText(until date: Date) -> String {
+        let totalMinutes = max(0, Int(ceil(date.timeIntervalSinceNow / 60.0)))
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        return "\(hours) hr \(minutes) min"
     }
 
     private var claudeTokenMax: Double {

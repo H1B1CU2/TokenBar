@@ -127,6 +127,18 @@ struct SettingsView: View {
             }
             
             Divider()
+
+            Toggle(isOn: $state.limitResetNotificationsEnabled) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Limit Reset Notifications")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Notify when a tracked session or weekly limit reset time arrives.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Divider()
             
             Toggle(isOn: $state.useSeparateGraphScale) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -207,11 +219,19 @@ struct SettingsView: View {
     
     @ViewBuilder private var providersPane: some View {
         VStack(spacing: 16) {
-            claudeCard
-            deepseekCard
-            antigravityCard
-            geminiCard
-            codexCard
+            ForEach(state.providerOrder, id: \.self) { provider in
+                if provider == "claude" {
+                    claudeCard
+                } else if provider == "deepseek" {
+                    deepseekCard
+                } else if provider == "antigravity" {
+                    antigravityCard
+                } else if provider == "gemini" {
+                    geminiCard
+                } else if provider == "codex" {
+                    codexCard
+                }
+            }
         }
     }
     
@@ -381,7 +401,10 @@ struct SettingsView: View {
                     
                     Toggle("Show usage graphs", isOn: $state.antigravityShowGraph)
                         .font(.system(size: 12))
-                    
+
+                    Toggle("Show latest thread", isOn: $state.antigravityShowLatestThread)
+                        .font(.system(size: 12))
+
                     Toggle(isOn: $state.antigravityFusedGraph) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Combine usage graphs")
@@ -1002,6 +1025,7 @@ extension View {
             .onChange(of: state.antigravityFusedGraph) { onLiveChange() }
             .onChange(of: state.antigravitySideBySide) { onLiveChange() }
             .onChange(of: state.antigravityShowGraph) { onLiveChange() }
+            .onChange(of: state.antigravityShowLatestThread) { onLiveChange() }
     }
 
     private func applyGeminiObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
@@ -1023,6 +1047,7 @@ extension View {
         self
             .onChange(of: state.showRemaining) { onLiveChange() }
             .onChange(of: state.showReductionIndicator) { onLiveChange() }
+            .onChange(of: state.limitResetNotificationsEnabled) { onLiveChange() }
             .onChange(of: state.useSeparateGraphScale) { onLiveChange() }
             .onChange(of: state.providerOrder) { onLiveChange() }
             .onChange(of: state.refreshInterval) { onLiveChange() }
