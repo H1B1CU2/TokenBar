@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct UsageGraphView: View {
+    static let cardCornerRadius: CGFloat = 8
+
     let history: [String: Double]
     let history2: [String: Double]?
     let tintColor: Color
@@ -65,7 +67,10 @@ struct UsageGraphView: View {
             let val2 = history2?[item.dateString] ?? 0.0
             return val1 + val2
         }.max() ?? 0.0
-        return max(yAxisMax, maxInHistory > 0 ? maxInHistory : yAxisMax)
+        let effectiveMax = max(yAxisMax, maxInHistory > 0 ? maxInHistory : yAxisMax)
+        // Add headroom so the tallest bar never reaches the very top edge
+        // (leaves room for the hover scale-up and avoids a "cut off" look).
+        return effectiveMax * 1.15
     }
     
     private var todayString: String {
@@ -110,7 +115,6 @@ struct UsageGraphView: View {
                     VStack(spacing: 4) {
                         GeometryReader { geo in
                             VStack(spacing: 0) {
-                                Spacer(minLength: 0)
                                 if let tintColor2, val2 > 0 {
                                     Rectangle()
                                         .fill(tintColor2)
@@ -128,7 +132,7 @@ struct UsageGraphView: View {
                             .cornerRadius(2)
                             .scaleEffect(hoveredIndex == index ? 1.08 : 1.0, anchor: .bottom)
                             .shadow(color: (hoveredIndex == index ? (val1 > 0 ? tintColor : (tintColor2 ?? tintColor)) : Color.clear).opacity(0.3), radius: 3, x: 0, y: -1)
-                            .frame(maxWidth: .infinity)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         }
                         .frame(height: 50)
                         
@@ -151,7 +155,7 @@ struct UsageGraphView: View {
         }
         .padding(8)
         .background(Color.primary.opacity(0.03))
-        .cornerRadius(8)
+        .cornerRadius(Self.cardCornerRadius)
         .onAppear {
             withAnimation(.easeOut(duration: 0.6)) {
                 animate = true

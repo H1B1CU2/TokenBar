@@ -1,37 +1,40 @@
 import SwiftUI
 
+// Nested corner radii are concentric: inner radius = outer radius − inset,
+// so every rounded rect shares the same corner center as the one around it.
+// The system popover corner measures as a CIRCULAR arc of 20pt (pixel-fitted
+// from a screenshot), so the shapes below use .circular, not .continuous —
+// a continuous corner of the right radius still leaves an uneven gap.
+private enum CardMetrics {
+    static let popoverRadius: CGFloat = 20
+    static let gutter: CGFloat = 8                            // padding around/between cards
+    static let cardRadius: CGFloat = popoverRadius - gutter
+    static let cardPaddingH: CGFloat = 12
+    static let cardPaddingV: CGFloat = 10
+    static let footerInset: CGFloat = 4                       // buttons inside the footer card
+    static let footerButtonRadius: CGFloat = cardRadius - footerInset
+    // The threads panel sits cardPaddingH from the corner, so the strict rule
+    // bottoms out at 0; clamp to keep a hint of rounding on a mid-card element.
+    // Matches the 7-Day Usage graph card's corner radius so inner panels read as one family.
+    static let panelRadius: CGFloat = UsageGraphView.cardCornerRadius
+}
+
 struct MenuView: View {
     @State var state: AppState
     let onRefresh: (Bool) async -> Void   // force: bypass rate-limit backoff/coalescing
     let onSettings: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(state.providerOrder, id: \.self) { provider in
-                if provider == "claude" {
-                    claudeBlock
-                } else if provider == "deepseek" {
-                    deepseekBlock
-                } else if provider == "antigravity" {
-                    antigravityBlock
-                } else if provider == "gemini" {
-                    geminiBlock
-                } else if provider == "codex" {
-                    codexBlock
-                }
-            }
-            if !state.claudeEnabled && !state.deepseekEnabled && !state.antigravityEnabled && !state.geminiEnabled && !state.codexEnabled {
-                Text("No providers enabled — open Settings")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 12)
-                Divider()
-            }
+        VStack(alignment: .leading, spacing: CardMetrics.gutter) {
+            providerCards
             footerButtons
         }
+        .padding(CardMetrics.gutter)
         .frame(width: 320)
-        .background(.regularMaterial)
+        // No explicit background: the popover frame already draws its own material
+        // (spanning the arrow too). Layering another material here only covers the
+        // content rect, and its top edge shows as a flat full-width seam right at
+        // the arrow's base line.
         .onChange(of: state.claudeEnabled) {
             Task { await onRefresh(false) }
         }
@@ -51,38 +54,57 @@ struct MenuView: View {
 
     // MARK: - Sections
 
+    private var providerCards: some View {
+        VStack(alignment: .leading, spacing: CardMetrics.gutter) {
+            ForEach(state.providerOrder, id: \.self) { provider in
+                if provider == "claude" {
+                    claudeBlock
+                } else if provider == "deepseek" {
+                    deepseekBlock
+                } else if provider == "antigravity" {
+                    antigravityBlock
+                } else if provider == "gemini" {
+                    geminiBlock
+                } else if provider == "codex" {
+                    codexBlock
+                }
+            }
+            if !state.claudeEnabled && !state.deepseekEnabled && !state.antigravityEnabled && !state.geminiEnabled && !state.codexEnabled {
+                Text("No providers enabled — open Settings")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .providerCard()
+            }
+        }
+    }
+
     @ViewBuilder private var claudeBlock: some View {
         if state.claudeEnabled {
-            claudeSection
-            Divider()
+            claudeSection.providerCard()
         }
     }
 
     @ViewBuilder private var deepseekBlock: some View {
         if state.deepseekEnabled {
-            deepseekSection
-            Divider()
+            deepseekSection.providerCard()
         }
     }
 
     @ViewBuilder private var antigravityBlock: some View {
         if state.antigravityEnabled {
-            antigravitySection
-            Divider()
+            antigravitySection.providerCard()
         }
     }
 
     @ViewBuilder private var geminiBlock: some View {
         if state.geminiEnabled {
-            geminiSection
-            Divider()
+            geminiSection.providerCard()
         }
     }
 
     @ViewBuilder private var codexBlock: some View {
         if state.codexEnabled {
-            codexSection
-            Divider()
+            codexSection.providerCard()
         }
     }
 
@@ -97,47 +119,25 @@ struct MenuView: View {
 
             if state.claudeSideBySide {
                 HStack(alignment: .top, spacing: 12) {
-                    claudeWindowRow("Session",
-                                    percent: state.claudeSessionPercent,
-                                    reset: state.claudeSessionResetAt)
-                    Divider()
-                    claudeWindowRow("Week",
-                                    percent: state.claudeWeekPercent,
-                                    reset: state.claudeWeekResetAt)
+                    claudeGroupColumn
+                    if showFablePanel {
+                        Divider()
+                        fableGroupColumn
+                    }
                 }
                 .fixedSize(horizontal: false, vertical: true)
             } else {
-                claudeWindowRow("Session",
-                                percent: state.claudeSessionPercent,
-                                reset: state.claudeSessionResetAt)
-                claudeWindowRow("Week",
-                                percent: state.claudeWeekPercent,
-                                reset: state.claudeWeekResetAt)
+                claudeGroupRow
+                if showFablePanel {
+                    Divider()
+                    fableGroupRow
+                }
             }
 
             if state.claudeShowLatestThread && !state.claudeLatestThreads.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Latest Threads")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    ForEach(state.claudeLatestThreads, id: \.id) { thread in
-                        HStack(spacing: 6) {
-                            Text(thread.title)
-                                .font(.system(size: 11, weight: .semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 6)
-                            HStack(spacing: 3) {
-                                Circle()
-                                    .fill(threadStatusColor(thread.status))
-                                    .frame(width: 5, height: 5)
-                                Text(thread.status)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .fixedSize()
-                        }
-                    }
-                }
+                latestThreadsPanel(state.claudeLatestThreads.map {
+                    ThreadDisplay(id: $0.id, title: $0.title, status: $0.status)
+                })
             }
 
             if let err = state.claudeError {
@@ -156,8 +156,6 @@ struct MenuView: View {
                 .padding(.top, 4)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     private var deepseekSection: some View {
@@ -179,6 +177,13 @@ struct MenuView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: CardMetrics.panelRadius, style: .circular)
+                        .fill(Color.primary.opacity(0.045))
+                )
             }
 
             if let err = state.deepseekError {
@@ -201,8 +206,6 @@ struct MenuView: View {
                 .padding(.top, 4)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     private var antigravitySection: some View {
@@ -234,29 +237,9 @@ struct MenuView: View {
             }
 
             if state.antigravityShowLatestThread && !state.antigravityLatestThreads.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Latest Threads")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    ForEach(state.antigravityLatestThreads, id: \.id) { thread in
-                        HStack(spacing: 6) {
-                            Text(thread.title)
-                                .font(.system(size: 11, weight: .semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 6)
-                            HStack(spacing: 3) {
-                                Circle()
-                                    .fill(threadStatusColor(thread.status))
-                                    .frame(width: 5, height: 5)
-                                Text(thread.status)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .fixedSize()
-                        }
-                    }
-                }
-                .padding(.top, 2)
+                latestThreadsPanel(state.antigravityLatestThreads.map {
+                    ThreadDisplay(id: $0.id, title: $0.title, status: $0.status)
+                })
             }
 
             if state.antigravityAvailable && state.antigravityShowGraph {
@@ -273,8 +256,6 @@ struct MenuView: View {
                 .padding(.top, 4)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     private var geminiSection: some View {
@@ -328,15 +309,13 @@ struct MenuView: View {
                 .padding(.top, 4)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     private var codexSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: "codex", size: 18)
-                Text("Codex")
+                Text("Chat GPT")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
             }
@@ -363,36 +342,16 @@ struct MenuView: View {
                 }
 
                 if state.codexShowLatestThread && !state.codexLatestThreads.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Latest Threads")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        ForEach(state.codexLatestThreads, id: \.id) { thread in
-                            HStack(spacing: 6) {
-                                Text(thread.title)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .lineLimit(1)
-                                Spacer(minLength: 6)
-                                HStack(spacing: 3) {
-                                    Circle()
-                                        .fill(threadStatusColor(thread.status))
-                                        .frame(width: 5, height: 5)
-                                    Text(thread.status)
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .fixedSize()
-                            }
-                        }
-                    }
-                    .padding(.top, 2)
+                    latestThreadsPanel(state.codexLatestThreads.map {
+                        ThreadDisplay(id: $0.id, title: $0.title, status: $0.status)
+                    })
                 }
             }
 
             if let err = state.codexError {
                 Text(err).font(.system(size: 10)).foregroundStyle(Color.codexAccent)
             } else if !state.codexAvailable {
-                Text("Reading local Codex usage…")
+                Text("Reading local Chat GPT usage…")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -409,8 +368,6 @@ struct MenuView: View {
                 .padding(.top, 4)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     private func geminiWindowRow(_ title: String, percent: Double, reset: Date?) -> some View {
@@ -593,6 +550,44 @@ struct MenuView: View {
 
     // MARK: - Generic UI Components
 
+    private struct ThreadDisplay: Identifiable {
+        let id: String
+        let title: String
+        let status: String
+    }
+
+    private func latestThreadsPanel(_ threads: [ThreadDisplay]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Latest Threads")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+            ForEach(threads) { thread in
+                HStack(spacing: 6) {
+                    Text(thread.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    HStack(spacing: 3) {
+                        Circle()
+                            .fill(threadStatusColor(thread.status))
+                            .frame(width: 5, height: 5)
+                        Text(thread.status)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .fixedSize()
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: CardMetrics.panelRadius, style: .circular)
+                .fill(Color.primary.opacity(0.045))
+        )
+    }
+
     private func claudeWindowRow(_ title: String, percent: Double, reset: Date?) -> some View {
         let fraction = min(1.0, max(0, percent / 100))
         let displayFraction = state.showRemaining ? (1.0 - fraction) : fraction
@@ -611,6 +606,71 @@ struct MenuView: View {
                 compact: state.claudeSideBySide,
                 isSession: title == "Session"
             )
+        }
+    }
+
+    // MARK: - Claude/Fable 5 Layout Modes
+    //
+    // Mirrors Antigravity's group layout (antigravityRow / antigravitySideBlock):
+    // "Claude" and "Fable 5" are two model groups, each showing its own Session+Week.
+    // claudeSideBySide flips the axis — side-by-side arranges the two GROUPS as
+    // columns (Session/Week stacked within each column, one Divider between groups);
+    // stacked arranges the two groups vertically (Session/Week side-by-side within
+    // each group, one Divider between groups).
+
+    private var claudeGroupRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Claude")
+                .font(.system(size: 11, weight: .bold))
+            HStack(alignment: .top, spacing: 12) {
+                claudeWindowRow("Session",
+                                percent: state.claudeSessionPercent,
+                                reset: state.claudeSessionResetAt)
+                Divider()
+                claudeWindowRow("Week",
+                                percent: state.claudeWeekPercent,
+                                reset: state.claudeWeekResetAt)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // Fable's weekly limit comes from the API's model-scoped limits — only some
+    // accounts have one, so the panel hides when the API doesn't report it.
+    private var showFablePanel: Bool {
+        state.claudeShowFableUsage && state.claudeFableWeekPercent != nil
+    }
+
+    private var fableGroupRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Fable 5")
+                .font(.system(size: 11, weight: .bold))
+            claudeWindowRow("Week",
+                            percent: state.claudeFableWeekPercent ?? 0,
+                            reset: state.claudeFableWeekResetAt)
+        }
+    }
+
+    private var claudeGroupColumn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Claude")
+                .font(.system(size: 11, weight: .bold))
+            claudeWindowRow("Session",
+                            percent: state.claudeSessionPercent,
+                            reset: state.claudeSessionResetAt)
+            claudeWindowRow("Week",
+                            percent: state.claudeWeekPercent,
+                            reset: state.claudeWeekResetAt)
+        }
+    }
+
+    private var fableGroupColumn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Fable 5")
+                .font(.system(size: 11, weight: .bold))
+            claudeWindowRow("Week",
+                            percent: state.claudeFableWeekPercent ?? 0,
+                            reset: state.claudeFableWeekResetAt)
         }
     }
 
@@ -636,8 +696,6 @@ struct MenuView: View {
         isSession: Bool
     ) -> some View {
         let normalizedPercent = normalizedUsageDisplayPercent(displayPercent)
-        let shouldShowReset = !isUsageWindowFull(displayPercent)
-
         return HStack(spacing: 4) {
             Text("\(percentText(normalizedPercent)) \(suffix)")
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
@@ -646,8 +704,7 @@ struct MenuView: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .layoutPriority(1)
             Spacer(minLength: 4)
-            if shouldShowReset,
-               let resetStr = resetText(reset, compact: compact, showDuration: isSession) {
+            if let resetStr = resetText(reset, compact: compact, showDuration: isSession) {
                 Text(resetStr)
                     .font(.system(size: isSession ? 9.5 : 10))
                     .foregroundStyle(.secondary)
@@ -660,49 +717,38 @@ struct MenuView: View {
     }
 
     private var footerButtons: some View {
-        VStack(spacing: 0) {
-            Divider()
-            HStack(spacing: 0) {
-                Button(action: {
-                    Task { await onRefresh(true) }
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise")
-                        Text("Refresh")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(FooterButtonStyle())
-
-                Divider().frame(height: 24)
-
-                Button(action: {
-                    onSettings()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "gearshape")
-                        Text("Settings")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(FooterButtonStyle())
-
-                Divider().frame(height: 24)
-
-                Button(action: {
-                    NSApp.terminate(nil)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "power")
-                        Text("Quit")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(FooterButtonStyle())
+        HStack(spacing: 4) {
+            footerButton("arrow.clockwise", "Refresh") {
+                Task { await onRefresh(true) }
             }
-            .padding(.vertical, 4)
-            .background(.regularMaterial)
+            footerButton("gearshape", "Settings") {
+                onSettings()
+            }
+            footerButton("power", "Quit") {
+                NSApp.terminate(nil)
+            }
         }
+        .padding(CardMetrics.footerInset)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: CardMetrics.cardRadius, style: .circular)
+                .fill(Color.primary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: CardMetrics.cardRadius, style: .circular)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    private func footerButton(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                Text(title)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(FooterButtonStyle())
     }
 
     // MARK: - Formatters
@@ -842,6 +888,25 @@ struct MenuView: View {
     }
 }
 
+// Card container for each provider in the popover: rounded, softly filled, and
+// hairline-stroked so it reads in both light and dark on the popover's material.
+private extension View {
+    func providerCard() -> some View {
+        self
+            .padding(.horizontal, CardMetrics.cardPaddingH)
+            .padding(.vertical, CardMetrics.cardPaddingV)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: CardMetrics.cardRadius, style: .circular)
+                    .fill(Color.primary.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: CardMetrics.cardRadius, style: .circular)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+            )
+    }
+}
+
 extension Color {
     static let claudeAccent = Color(red: 0xD9 / 255.0, green: 0x77 / 255.0, blue: 0x57 / 255.0)
     static let deepseekAccent = Color(red: 0x4D / 255.0, green: 0x6B / 255.0, blue: 0xFE / 255.0)
@@ -852,11 +917,28 @@ extension Color {
 
 struct FooterButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.primary)
-            .padding(.vertical, 6)
-            .background(configuration.isPressed ? Color.secondary.opacity(0.15) : Color.clear)
-            .contentShape(Rectangle())
+        FooterButtonLabel(configuration: configuration)
+    }
+
+    // Hover state needs real View storage; a ButtonStyle struct is recreated on
+    // every render, so @State directly on it would reset.
+    private struct FooterButtonLabel: View {
+        let configuration: Configuration
+        @State private var hovering = false
+
+        var body: some View {
+            configuration.label
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.primary)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: CardMetrics.footerButtonRadius, style: .circular)
+                        .fill(configuration.isPressed
+                              ? Color.primary.opacity(0.12)
+                              : (hovering ? Color.primary.opacity(0.06) : Color.clear))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: CardMetrics.footerButtonRadius, style: .circular))
+                .onHover { hovering = $0 }
+        }
     }
 }

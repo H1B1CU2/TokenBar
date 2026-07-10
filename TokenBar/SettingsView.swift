@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
@@ -22,42 +23,118 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     }
 }
 
+private enum SettingsLayout {
+    static let sidebarWidth: CGFloat = 184
+    static let contentMaxWidth: CGFloat = 1_040
+    static let cardSpacing: CGFloat = 16
+    // Concentric corners: the card is inset `cardGutter` inside the window's own
+    // rounded corner, so its radius must shrink by that same amount to stay
+    // concentric with it — a fixed radius on the inner shape drifts out of true
+    // the moment the gutter changes.
+    static let windowCornerRadius: CGFloat = 20
+    static let cardGutter: CGFloat = 8
+    static let cardCornerRadius: CGFloat = windowCornerRadius - cardGutter
+}
+
+// Native vibrancy for the sidebar: `.sidebar`/`.behindWindow` is the same system
+// material Mail/Notes/Reminders use, and it automatically renders as Liquid Glass
+// on macOS 26 without any extra API — the OS re-themes standard materials on Tahoe.
+private struct VisualEffectView: NSViewRepresentable {
+    var material: NSVisualEffectView.Material
+    var blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
+    }
+}
+
 struct SettingsView: View {
     @State var state: AppState
     let onLiveChange: () -> Void
-    
+
     @State private var selectedTab: SettingsTab = .general
+    @State private var draggedProvider: String? = nil
+
+    private var cardFillColor: Color { Color(NSColor.windowBackgroundColor) }
+    private var hairlineBorderColor: Color { Color.white.opacity(0.12) }
 
     var body: some View {
         HStack(spacing: 0) {
-            // Sidebar
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(SettingsTab.allCases) { tab in
-                    sidebarRow(for: tab)
-                }
-                Spacer()
-            }
-            .padding(.vertical, 14)
-            .padding(.horizontal, 8)
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(minWidth: 140)
-            .background(Color(NSColor.windowBackgroundColor))
-            
-            Divider()
-            
-            // Detail pane
+            sidebarPane
+                .frame(width: SettingsLayout.sidebarWidth)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     detailTitleView(for: selectedTab)
                     detailPaneView(for: selectedTab)
                 }
-                .padding(20)
+                .frame(maxWidth: SettingsLayout.contentMaxWidth, alignment: .leading)
+                .padding(.horizontal, 28)
+                .padding(.top, 40)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity, alignment: .top)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(NSColor.controlBackgroundColor))
+            // The content pane is a floating card, fully opaque — no material, no
+            // vibrancy, so it never picks up window transparency the way the
+            // sidebar does. compositingGroup keeps the flat fill clipping cleanly
+            // at the rounded corners instead of any edge artifacts.
+            .background(cardFillColor)
+            .compositingGroup()
+            .clipShape(RoundedRectangle(cornerRadius: SettingsLayout.cardCornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: SettingsLayout.cardCornerRadius, style: .continuous)
+                    .inset(by: 0.5)
+                    .strokeBorder(hairlineBorderColor, lineWidth: 1)
+            }
+            .padding(SettingsLayout.cardGutter)
         }
-        .frame(width: 580, height: 420)
+        // The sidebar draws no fill of its own — this is the only glass in the
+        // window, and the sidebar is simply the gap that lets it show through.
+        // The content card floats on top of it, inset 8pt on all sides so the
+        // glass forms a gutter around the card as well as behind the sidebar.
+        .background {
+            VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
+                .overlay(Color.black.opacity(0.10))
+        }
+        .frame(minWidth: 760, idealWidth: 1_040, minHeight: 560, idealHeight: 720)
+        // Extend the glass under the transparent title bar so it reaches the true
+        // top edge instead of stopping below the title-bar safe-area inset (which
+        // left a blank strip). The sidebar's own top padding keeps its content
+        // clear of the floating traffic-light buttons.
+        .ignoresSafeArea(.container, edges: .top)
+        .controlSize(.regular)
         .applyLiveChangeObservers(state: state, onLiveChange: onLiveChange)
+    }
+
+    private var sidebarPane: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("TokenBar")
+                    .font(.system(size: 15, weight: .bold))
+                Text("Settings")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(SettingsTab.allCases) { tab in
+                    sidebarRow(for: tab)
+                }
+            }
+            Spacer()
+        }
+        .padding(.top, 44)
+        .padding([.horizontal, .bottom], 16)
     }
     
     private func sidebarRow(for tab: SettingsTab) -> some View {
@@ -66,14 +143,14 @@ struct SettingsView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: tab.icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(selectedTab == tab ? Color.accentColor : .secondary)
-                    .frame(width: 20, height: 20)
+                    .frame(width: 22, height: 22)
                 Text(tab.title)
-                    .font(.system(size: 13, weight: selectedTab == tab ? .semibold : .regular))
+                    .font(.system(size: 13, weight: selectedTab == tab ? .semibold : .medium))
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 11)
+            .frame(height: 42)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -86,11 +163,17 @@ struct SettingsView: View {
     }
     
     @ViewBuilder private func detailTitleView(for tab: SettingsTab) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .firstTextBaseline) {
             Text(tab.title)
-                .font(.title2.bold())
-            Divider()
+                .font(.system(size: 24, weight: .bold))
+            Spacer()
+            if tab == .providers {
+                Text("\(enabledProviders.count) enabled")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
         }
+        .padding(.bottom, 4)
     }
     
     @ViewBuilder private func detailPaneView(for tab: SettingsTab) -> some View {
@@ -103,72 +186,137 @@ struct SettingsView: View {
     }
     
     @ViewBuilder private var generalPane: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Toggle(isOn: $state.showRemaining) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Left Mode")
-                        .font(.system(size: 13, weight: .medium))
-                    Text("Show left usage/quota instead of used.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: SettingsLayout.cardSpacing) {
+                VStack(spacing: SettingsLayout.cardSpacing) {
+                    displaySettingsCard
+                    notificationSettingsCard
                 }
-            }
-            
-            Divider()
-            
-            Toggle(isOn: $state.showReductionIndicator) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Token Reduction Indicator")
-                        .font(.system(size: 13, weight: .medium))
-                    Text("Show a small indicator dot on the brain icon for 10 seconds when a token consumption or balance reduction occurs.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            
-            Divider()
+                .frame(maxWidth: .infinity)
 
-            Toggle(isOn: $state.limitResetNotificationsEnabled) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Limit Reset Notifications")
-                        .font(.system(size: 13, weight: .medium))
-                    Text("Notify when a tracked session or weekly limit reset time arrives.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                VStack(spacing: SettingsLayout.cardSpacing) {
+                    scheduleSettingsCard
+                    providerOrderCard
                 }
+                .frame(maxWidth: .infinity)
             }
+            .frame(minWidth: 680)
 
+            VStack(spacing: SettingsLayout.cardSpacing) {
+                displaySettingsCard
+                notificationSettingsCard
+                scheduleSettingsCard
+                providerOrderCard
+            }
+        }
+    }
+
+    private var displaySettingsCard: some View {
+        settingsCard(icon: "slider.horizontal.3", title: "Display") {
+            settingToggle("Left Mode",
+                          "Show left usage/quota instead of used.",
+                          isOn: $state.showRemaining)
             Divider()
-            
-            Toggle(isOn: $state.useSeparateGraphScale) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Separate Graph Scales")
-                        .font(.system(size: 13, weight: .medium))
-                    Text("Scale each provider's usage graph to its own peak instead of sharing a global maximum.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+            settingToggle("Separate Graph Scales",
+                          "Scale each provider's usage graph to its own peak instead of sharing a global maximum.",
+                          isOn: $state.useSeparateGraphScale)
+        }
+    }
+
+    private var notificationSettingsCard: some View {
+        settingsCard(icon: "bell.badge", title: "Notifications") {
+            settingToggle("Token Reduction Indicator",
+                          "Show an indicator when token consumption or balance drops.",
+                          isOn: $state.showReductionIndicator)
+            Divider()
+            settingToggle("Limit Reset Notifications",
+                          "Notify when a tracked limit resets.",
+                          isOn: $state.limitResetNotificationsEnabled)
+            if state.limitResetNotificationsEnabled {
+                limitResetLeadMinutesControl
+            }
+            Divider()
+            settingToggle("Low Limit Notifications",
+                          "Notify when a tracked limit's remaining amount drops at or below a threshold.",
+                          isOn: $state.lowLimitNotificationsEnabled)
+            if state.lowLimitNotificationsEnabled {
+                lowLimitThresholdControl
+            }
+        }
+    }
+
+    private var limitResetLeadMinutesControl: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Also notify before reset")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(LimitResetLeadMinutes.options, id: \.self) { minutes in
+                    leadMinuteChip(minutes)
                 }
             }
-            
-            Divider()
-            
-            VStack(alignment: .leading, spacing: 6) {
+        }
+        .padding(.leading, 2)
+    }
+
+    private func leadMinuteChip(_ minutes: Int) -> some View {
+        let isOn = state.limitResetLeadMinutes.contains(minutes)
+        return Button {
+            if isOn {
+                state.limitResetLeadMinutes.remove(minutes)
+            } else {
+                state.limitResetLeadMinutes.insert(minutes)
+            }
+        } label: {
+            Text("\(minutes)m")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isOn ? Color.white : Color.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isOn ? Color.accentColor : Color.secondary.opacity(0.12))
+                )
+        }
+        .buttonStyle(.plain)
+        .help("Notify \(minutes) minute\(minutes == 1 ? "" : "s") before a limit resets")
+    }
+
+    private var lowLimitThresholdControl: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Remaining threshold")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(state.lowLimitThresholdPercent))%")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: $state.lowLimitThresholdPercent, in: 1...50, step: 1)
+        }
+        .padding(.leading, 2)
+    }
+
+    private var scheduleSettingsCard: some View {
+        settingsCard(icon: "clock", title: "Schedule") {
+            VStack(alignment: .leading, spacing: 7) {
                 Text("Refresh Interval")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
                 Picker("", selection: $state.refreshInterval) {
-                    ForEach(RefreshInterval.allCases) { iv in
-                        Text(iv.title).tag(iv)
+                    ForEach(RefreshInterval.allCases) { interval in
+                        Text(interval.title).tag(interval)
                     }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            
             Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 Text("First Day of Week")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
                 Picker("", selection: $state.firstDayOfWeek) {
                     ForEach(FirstDayOfWeek.allCases) { day in
                         Text(day.title).tag(day)
@@ -177,64 +325,174 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
             }
-            
-            Divider()
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Provider Order")
-                    .font(.system(size: 13, weight: .semibold))
-                
-                ForEach(state.providerOrder.indices, id: \.self) { idx in
-                    HStack {
-                        Circle()
-                            .fill(providerColor(state.providerOrder[idx]))
-                            .frame(width: 6, height: 6)
-                        Text(providerName(state.providerOrder[idx]))
-                            .font(.system(size: 12))
-                        Spacer()
-                        Button(action: {
-                            state.moveProviderUp(at: idx)
-                        }) {
-                            Image(systemName: "chevron.up")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(idx == 0)
-                        
-                        Button(action: {
-                            state.moveProviderDown(at: idx)
-                        }) {
-                            Image(systemName: "chevron.down")
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(idx == state.providerOrder.count - 1)
+        }
+    }
+
+    private var providerOrderCard: some View {
+        settingsCard(icon: "list.number", title: "Provider Order") {
+            if enabledProviders.isEmpty {
+                Label("No providers enabled", systemImage: "eye.slash")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .center)
+            } else {
+                ForEach(enabledProviders, id: \.self) { provider in
+                    HStack(spacing: 10) {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                        ProviderIcon(provider: provider, size: 24)
+                        Text(providerName(provider))
+                            .font(.system(size: 13, weight: .medium))
+                        Spacer(minLength: 12)
                     }
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(Color(NSColor.controlBackgroundColor).opacity(0.4))
-                    .cornerRadius(6)
+                    .padding(.horizontal, 11)
+                    .frame(height: 46)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(Color.secondary.opacity(0.08))
+                    )
+                    .opacity(draggedProvider == provider ? 0.5 : 1.0)
+                    .onDrag {
+                        draggedProvider = provider
+                        return NSItemProvider(object: provider as NSString)
+                    }
+                    .onDrop(of: [.text], delegate: ProviderDropDelegate(
+                        item: provider,
+                        order: $state.providerOrder,
+                        draggedItem: $draggedProvider
+                    ))
                 }
+            }
+        }
+    }
+
+    private var enabledProviders: [String] {
+        state.providerOrder.filter(isProviderEnabled)
+    }
+
+    private func isProviderEnabled(_ provider: String) -> Bool {
+        switch provider {
+        case "claude": return state.claudeEnabled
+        case "deepseek": return state.deepseekEnabled
+        case "antigravity": return state.antigravityEnabled
+        case "gemini": return state.geminiEnabled
+        case "codex": return state.codexEnabled
+        default: return false
+        }
+    }
+
+    /// Live-reorders `order` as a dragged provider row passes over another row.
+    /// Operates on the full provider order (not just the visible/enabled subset)
+    /// so disabled providers keep their relative position, just shifted aside.
+    private struct ProviderDropDelegate: DropDelegate {
+        let item: String
+        let order: Binding<[String]>
+        let draggedItem: Binding<String?>
+
+        func dropEntered(info: DropInfo) {
+            guard let dragged = draggedItem.wrappedValue, dragged != item,
+                  let fromIndex = order.wrappedValue.firstIndex(of: dragged),
+                  let toIndex = order.wrappedValue.firstIndex(of: item),
+                  fromIndex != toIndex else { return }
+            withAnimation(.default) {
+                order.wrappedValue.move(
+                    fromOffsets: IndexSet(integer: fromIndex),
+                    toOffset: toIndex > fromIndex ? toIndex + 1 : toIndex
+                )
+            }
+        }
+
+        func dropUpdated(info: DropInfo) -> DropProposal? {
+            DropProposal(operation: .move)
+        }
+
+        func performDrop(info: DropInfo) -> Bool {
+            draggedItem.wrappedValue = nil
+            return true
+        }
+    }
+
+    /// A titled settings group rendered with the same card chrome as the
+    /// provider cards: an accent-tinted icon, a title, a divider, then content.
+    private func settingsCard<Content: View>(
+        icon: String,
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.accentColor.opacity(0.12))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                Spacer()
+            }
+            Divider()
+            content()
+        }
+        .settingsCardStyle()
+    }
+
+    private func settingToggle(_ title: String, _ subtitle: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
     
     @ViewBuilder private var providersPane: some View {
-        VStack(spacing: 16) {
-            ForEach(state.providerOrder, id: \.self) { provider in
-                if provider == "claude" {
-                    claudeCard
-                } else if provider == "deepseek" {
-                    deepseekCard
-                } else if provider == "antigravity" {
-                    antigravityCard
-                } else if provider == "gemini" {
-                    geminiCard
-                } else if provider == "codex" {
-                    codexCard
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: SettingsLayout.cardSpacing) {
+                providerColumn(parity: 0)
+                providerColumn(parity: 1)
+            }
+            .frame(minWidth: 776, maxWidth: .infinity, alignment: .leading)
+
+            VStack(spacing: SettingsLayout.cardSpacing) {
+                ForEach(state.providerOrder, id: \.self) { provider in
+                    providerCard(for: provider)
                 }
             }
         }
     }
-    
+
+    private func providerColumn(parity: Int) -> some View {
+        VStack(spacing: SettingsLayout.cardSpacing) {
+            ForEach(Array(state.providerOrder.enumerated()), id: \.element) { index, provider in
+                if index % 2 == parity {
+                    providerCard(for: provider)
+                }
+            }
+        }
+        .frame(width: 380)
+    }
+
+    @ViewBuilder private func providerCard(for provider: String) -> some View {
+        if provider == "claude" {
+            claudeCard
+        } else if provider == "deepseek" {
+            deepseekCard
+        } else if provider == "antigravity" {
+            antigravityCard
+        } else if provider == "gemini" {
+            geminiCard
+        } else if provider == "codex" {
+            codexCard
+        }
+    }
+
     private var claudeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -287,6 +545,16 @@ struct SettingsView: View {
                     Toggle("Show latest thread", isOn: $state.claudeShowLatestThread)
                         .font(.system(size: 12))
 
+                    Toggle(isOn: $state.claudeShowFableUsage) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Show Fable 5 usage")
+                                .font(.system(size: 12))
+                            Text("Fable 5's own weekly limit, as reported by Anthropic's usage API. Hidden when your account has no Fable-specific limit.")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
                     Text("Displays your official Claude usage via your Claude Code access token, which is automatically fetched from your secure keychain or credentials file.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -295,15 +563,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
-        )
+        .settingsCardStyle()
     }
     
     private var deepseekCard: some View {
@@ -338,7 +598,7 @@ struct SettingsView: View {
                         Text("API Key")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
-                        TextField("sk-...", text: $state.deepseekApiKey)
+                        SecureField("sk-...", text: $state.deepseekApiKey)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.body, design: .monospaced))
                             .onSubmit {
@@ -363,15 +623,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
-        )
+        .settingsCardStyle()
     }
     
     private var antigravityCard: some View {
@@ -433,15 +685,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
-        )
+        .settingsCardStyle()
     }
     
 
@@ -491,15 +735,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
-        )
+        .settingsCardStyle()
     }
 
     private var codexCard: some View {
@@ -508,7 +744,7 @@ struct SettingsView: View {
                 ProviderIcon(provider: "codex")
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Codex")
+                    Text("Chat GPT")
                         .font(.system(size: 13, weight: .semibold))
                     Text("Local Thread Token Usage")
                         .font(.caption2)
@@ -542,7 +778,7 @@ struct SettingsView: View {
                     Toggle("Show latest thread", isOn: $state.codexShowLatestThread)
                         .font(.system(size: 12))
 
-                    Text("Reads local Codex thread token totals from ~/.codex/state_5.sqlite to display usage data.")
+                    Text("Reads local Chat GPT thread token totals from ~/.codex/state_5.sqlite to display usage data.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(nil)
@@ -550,15 +786,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(NSColor.controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
-        )
+        .settingsCardStyle()
     }
 
     private func providerName(_ id: String) -> String {
@@ -567,7 +795,7 @@ struct SettingsView: View {
         case "deepseek": return "DeepSeek"
         case "antigravity": return "Antigravity"
         case "gemini": return "Gemini"
-        case "codex": return "Codex"
+        case "codex": return "Chat GPT"
         default: return id.capitalized
         }
     }
@@ -590,6 +818,8 @@ let ClaudeSVGPath = "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.69
 
 // Gemini's four-point star (concave arc sides), viewBox 0 0 24 24.
 let GeminiSVGPath = "M12 24A14.304 14.304 0 0 0 0 12 14.304 14.304 0 0 0 12 0a14.305 14.305 0 0 0 12 12 14.305 14.305 0 0 0-12 12"
+
+let ChatGPTSVGPath = "M249.176 323.434V298.276C249.176 296.158 249.971 294.569 251.825 293.509L302.406 264.381C309.29 260.409 317.5 258.555 325.973 258.555C357.75 258.555 377.877 283.185 377.877 309.399C377.877 311.253 377.877 313.371 377.611 315.49L325.178 284.771C322.001 282.919 318.822 282.919 315.645 284.771L249.176 323.434ZM367.283 421.415V361.301C367.283 357.592 365.694 354.945 362.516 353.092L296.048 314.43L317.763 301.982C319.617 300.925 321.206 300.925 323.058 301.982L373.639 331.112C388.205 339.586 398.003 357.592 398.003 375.069C398.003 395.195 386.087 413.733 367.283 421.412V421.415ZM233.553 368.452L211.838 355.742C209.986 354.684 209.19 353.095 209.19 350.975V292.718C209.19 264.383 230.905 242.932 260.301 242.932C271.423 242.932 281.748 246.641 290.49 253.26L238.321 283.449C235.146 285.303 233.555 287.951 233.555 291.659V368.455L233.553 368.452ZM280.292 395.462L249.176 377.985V340.913L280.292 323.436L311.407 340.913V377.985L280.292 395.462ZM300.286 475.968C289.163 475.968 278.837 472.259 270.097 465.64L322.264 435.449C325.441 433.597 327.03 430.949 327.03 427.239V350.445L349.011 363.155C350.865 364.213 351.66 365.802 351.66 367.922V426.179C351.66 454.514 329.679 475.965 300.286 475.965V475.968ZM237.525 416.915L186.944 387.785C172.378 379.31 162.582 361.305 162.582 343.827C162.582 323.436 174.763 305.164 193.563 297.485V357.861C193.563 361.571 195.154 364.217 198.33 366.071L264.535 404.467L242.82 416.915C240.967 417.972 239.377 417.972 237.525 416.915ZM234.614 460.343C204.689 460.343 182.71 437.833 182.71 410.028C182.71 407.91 182.976 405.792 183.238 403.672L235.405 433.863C238.582 435.715 241.763 435.715 244.938 433.863L311.407 395.466V420.622C311.407 422.742 310.612 424.331 308.758 425.389L258.179 454.519C251.293 458.491 243.083 460.343 234.611 460.343H234.614ZM300.286 491.854C332.329 491.854 359.073 469.082 365.167 438.892C394.825 431.211 413.892 403.406 413.892 375.073C413.892 356.535 405.948 338.529 391.648 325.552C392.972 319.991 393.766 314.43 393.766 308.87C393.766 271.003 363.048 242.666 327.562 242.666C320.413 242.666 313.528 243.723 306.644 246.109C294.725 234.457 278.307 227.042 260.301 227.042C228.258 227.042 201.513 249.815 195.42 280.004C165.761 287.685 146.694 315.49 146.694 343.824C146.694 362.362 154.638 380.368 168.938 393.344C167.613 398.906 166.819 404.467 166.819 410.027C166.819 447.894 197.538 476.231 233.024 476.231C240.172 476.231 247.058 475.173 253.943 472.788C265.859 484.441 282.278 491.854 300.286 491.854Z"
 
 let DeepSeekSVGPath = "M23.748 4.482c-.254-.124-.364.113-.512.234-.051.039-.094.09-.137.136-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.156-.708-.311-.955-.65-.172-.241-.219-.51-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.093.172.187.129.323-.082.28-.18.552-.266.833-.055.179-.137.217-.329.14a5.526 5.526 0 01-1.736-1.18c-.857-.828-1.631-1.742-2.597-2.458a11.365 11.365 0 00-.689-.471c-.985-.957.13-1.743.388-1.836.27-.098.093-.432-.779-.428-.872.004-1.67.295-2.687.684a3.055 3.055 0 01-.465.137 9.597 9.597 0 00-2.883-.102c-1.885.21-3.39 1.102-4.497 2.623C.082 8.606-.231 10.684.152 12.85c.403 2.284 1.569 4.175 3.36 5.653 1.858 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.133-.284 4.994-1.86.47.234.962.327 1.78.397.63.059 1.236-.03 1.705-.128.735-.156.684-.837.419-.961-2.155-1.004-1.682-.595-2.113-.926 1.096-1.296 2.746-2.642 3.392-7.003.05-.347.007-.565 0-.845-.004-.17.035-.237.23-.256a4.173 4.173 0 001.545-.475c1.396-.763 1.96-2.015 2.093-3.517.02-.23-.004-.467-.247-.588zM11.581 18c-2.089-1.642-3.102-2.183-3.52-2.16-.392.024-.321.471-.235.763.09.288.207.486.371.739.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.167-1.361-.802-2.5-1.86-3.301-3.307-.774-1.393-1.224-2.887-1.298-4.482-.02-.386.093-.522.477-.592a4.696 4.696 0 011.529-.039c2.132.312 3.946 1.265 5.468 2.774.868.86 1.525 1.887 2.202 2.891.72 1.066 1.494 2.082 2.48 2.914.348.292.625.514.891.677-.802.09-2.14.11-3.054-.614zm1-6.44a.306.306 0 01.415-.287.302.302 0 01.2.288.306.306 0 01-.31.307.303.303 0 01-.304-.308zm3.11 1.596c-.2.081-.399.151-.59.16a1.245 1.245 0 01-.798-.254c-.274-.23-.47-.358-.552-.758a1.73 1.73 0 01.016-.588c.07-.327-.008-.537-.239-.727-.187-.156-.426-.199-.688-.199a.559.559 0 01-.254-.078c-.11-.054-.2-.19-.114-.358.028-.054.16-.186.192-.21.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.391.451.462.576.685.914.176.265.336.537.445.848.067.195-.019.354-.25.452z"
 
@@ -929,7 +1159,7 @@ struct ProviderIcon: View {
         image.isTemplate = true
         return image
     }()
-    
+
     var body: some View {
         switch provider {
         case "claude":
@@ -980,15 +1210,34 @@ struct ProviderIcon: View {
         case "codex":
             ZStack {
                 Circle()
-                    .fill(Color(red: 142 / 255.0, green: 142 / 255.0, blue: 147 / 255.0).opacity(0.12))
+                    .fill(Color.primary.opacity(0.12))
                     .frame(width: size, height: size)
-                Image(systemName: "terminal")
-                    .font(.system(size: size * 0.48, weight: .semibold))
-                    .foregroundStyle(Color(red: 142 / 255.0, green: 142 / 255.0, blue: 147 / 255.0))
+                SVGPathShape(d: ChatGPTSVGPath)
+                    .fill(Color.primary)
+                    .frame(width: size * 0.55, height: size * 0.55)
             }
         default:
             EmptyView()
         }
+    }
+}
+
+// Shared card chrome for the settings window: rounded, softly filled, and
+// hairline-stroked so provider cards and general setting groups read alike.
+private extension View {
+    func settingsCardStyle() -> some View {
+        self
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(NSColor.controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.04), radius: 8, y: 2)
     }
 }
 
@@ -1010,6 +1259,7 @@ extension View {
             .onChange(of: state.claudeSideBySide) { onLiveChange() }
             .onChange(of: state.claudeShowGraph) { onLiveChange() }
             .onChange(of: state.claudeShowLatestThread) { onLiveChange() }
+            .onChange(of: state.claudeShowFableUsage) { onLiveChange() }
     }
 
     private func applyDeepSeekObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {
@@ -1048,6 +1298,9 @@ extension View {
             .onChange(of: state.showRemaining) { onLiveChange() }
             .onChange(of: state.showReductionIndicator) { onLiveChange() }
             .onChange(of: state.limitResetNotificationsEnabled) { onLiveChange() }
+            .onChange(of: state.limitResetLeadMinutes) { onLiveChange() }
+            .onChange(of: state.lowLimitNotificationsEnabled) { onLiveChange() }
+            .onChange(of: state.lowLimitThresholdPercent) { onLiveChange() }
             .onChange(of: state.useSeparateGraphScale) { onLiveChange() }
             .onChange(of: state.providerOrder) { onLiveChange() }
             .onChange(of: state.refreshInterval) { onLiveChange() }

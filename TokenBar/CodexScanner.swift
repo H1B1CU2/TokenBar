@@ -34,7 +34,7 @@ enum CodexScanner {
 
     static func scan() async -> CodexUsage {
         guard FileManager.default.fileExists(atPath: dbURL.path) else {
-            return CodexUsage(error: "No Codex usage database found")
+            return CodexUsage(error: "No Chat GPT usage database found")
         }
 
         let calendar = Calendar.current
@@ -68,7 +68,7 @@ enum CodexScanner {
             """
 
         guard let (db, stmt) = openReadable(dbURL, query: query) else {
-            return CodexUsage(error: "Could not inspect Codex threads")
+            return CodexUsage(error: "Could not inspect Chat GPT threads")
         }
         defer {
             sqlite3_finalize(stmt)
@@ -116,7 +116,7 @@ enum CodexScanner {
         }
 
         guard sawRows else {
-            return CodexUsage(error: "No Codex token usage yet")
+            return CodexUsage(error: "No Chat GPT token usage yet")
         }
 
         let todayKey = formatter.string(from: now)

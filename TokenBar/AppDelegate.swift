@@ -3,6 +3,7 @@ import SwiftUI
 @preconcurrency import UserNotifications
 
 private let limitResetNotificationPrefix = "TokenBar.limitReset."
+private let lowLimitNotificationPrefix = "TokenBar.lowLimit."
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
@@ -149,10 +150,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             rootView: SettingsView(state: state, onLiveChange: { [weak self] in
                 self?.applySettingsLive()
             })
+            // Forced dark: the glass/gutter look is tuned against a dark chrome —
+            // in light mode the sidebar vibrancy reads muddy and the hairline card
+            // border disappears. Scoped to this window only, not the whole app.
+            .preferredColorScheme(.dark)
         )
         let window = NSWindow(contentViewController: hosting)
-        window.title = "TokenBar Settings"
-        window.styleMask = [.titled, .closable]
+        window.title = ""
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        // Non-opaque so the sidebar's .behindWindow vibrancy can show real desktop
+        // blur through it (native Liquid Glass on macOS 26). The floating content
+        // card blocks the see-through over its own area via its own material +
+        // tint, regardless of the window's opacity.
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.backgroundColor = .clear
+        // Background dragging would steal mouse-downs from in-content drag gestures
+        // (e.g. reordering provider rows). The window stays movable via the native
+        // title-bar hit region at the top (still present under the traffic lights
+        // thanks to .titled + fullSizeContentView) without that conflict.
+        window.isMovableByWindowBackground = false
+        window.contentMinSize = NSSize(width: 760, height: 560)
+        window.setContentSize(NSSize(width: 1_040, height: 720))
+        window.setFrameAutosaveName("TokenBarSettingsWindow")
         window.isReleasedWhenClosed = false
         window.center()
         settingsWindow = window
@@ -168,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         renderIcon()
         startPollTimer()
         reconcileLimitResetNotifications()
+        reconcileLowLimitNotifications()
         Task { await refresh() }
     }
 
@@ -196,6 +220,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var claudeBackoffUntil: Date?
     private var claudeRateLimitStreak = 0
     private var claudeLastScanAt: Date?
+
+    // Identifiers ("providerID.windowID.resetAtEpoch") of low-limit notifications
+    // already fired for the current reset cycle, so we notify once per dip below
+    // threshold rather than on every poll while it stays low.
+    private var lowLimitFiredIdentifiers: Set<String> = []
 
     func refresh(force: Bool = false) async {
         state.isLoading = true
@@ -312,6 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         state.isLoading = false
         state.lastRefreshed = Date()
         reconcileLimitResetNotifications()
+        reconcileLowLimitNotifications()
         renderIcon()
     }
 
@@ -336,6 +366,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             state.claudeSessionResetAt = claude.sessionResetAt
             state.claudeWeekPercent = claude.weekPercent
             state.claudeWeekResetAt = claude.weekResetAt
+            state.claudeFableWeekPercent = claude.fableWeekPercent
+            state.claudeFableWeekResetAt = claude.fableWeekResetAt
             state.claudeError = nil
             state.persistClaudeUsage()
             claudeBackoffUntil = nil
@@ -356,6 +388,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             state.claudeSessionResetAt = nil
             state.claudeWeekPercent = 0
             state.claudeWeekResetAt = nil
+            state.claudeFableWeekPercent = nil
+            state.claudeFableWeekResetAt = nil
             state.claudeError = claude.error
             state.clearPersistedClaudeUsage()
             claudeBackoffUntil = nil
@@ -424,23 +458,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     private struct LimitResetNotification {
+        enum Kind: Hashable {
+            case atReset
+            case leadTime(minutes: Int)
+        }
+
+        let kind: Kind
         let providerID: String
         let providerName: String
         let windowID: String
         let windowName: String
         let resetAt: Date
 
+        // When the notification should actually fire — the reset moment itself for
+        // .atReset, or that many minutes earlier for .leadTime.
+        var fireAt: Date {
+            switch kind {
+            case .atReset:
+                return resetAt
+            case .leadTime(let minutes):
+                return resetAt.addingTimeInterval(-Double(minutes * 60))
+            }
+        }
+
         var identifier: String {
             let timestamp = Int(resetAt.timeIntervalSince1970)
-            return "\(limitResetNotificationPrefix)\(providerID).\(windowID).\(timestamp)"
+            switch kind {
+            case .atReset:
+                return "\(limitResetNotificationPrefix)\(providerID).\(windowID).\(timestamp)"
+            case .leadTime(let minutes):
+                return "\(limitResetNotificationPrefix)\(providerID).\(windowID).lead\(minutes).\(timestamp)"
+            }
         }
 
         var title: String {
-            "\(providerName) \(windowName) limit reset"
+            switch kind {
+            case .atReset:
+                return "\(providerName) \(windowName) limit reset"
+            case .leadTime(let minutes):
+                return "\(providerName) \(windowName) limit resets in \(minutes) min"
+            }
         }
 
         var body: String {
-            "Your \(providerName) \(windowName.lowercased()) limit should be available again."
+            switch kind {
+            case .atReset:
+                return "Your \(providerName) \(windowName.lowercased()) limit should be available again."
+            case .leadTime(let minutes):
+                return "Your \(providerName) \(windowName.lowercased()) limit resets in \(minutes) minutes."
+            }
         }
     }
 
@@ -488,7 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
 
             for notification in notifications where !existingIDs.contains(notification.identifier) {
-                let interval = notification.resetAt.timeIntervalSinceNow
+                let interval = notification.fireAt.timeIntervalSinceNow
                 guard interval > 1 else { continue }
 
                 let content = UNMutableNotificationContent()
@@ -523,6 +589,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let now = Date()
         var notifications: [LimitResetNotification] = []
 
+        let leadMinutes = state.limitResetLeadMinutes
+
         func append(
             enabled: Bool,
             available: Bool,
@@ -532,19 +600,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             windowName: String,
             resetAt: Date?
         ) {
-            guard enabled,
-                  available,
-                  let resetAt,
-                  resetAt.timeIntervalSince(now) > minimumLeadTime else { return }
-            notifications.append(
-                LimitResetNotification(
-                    providerID: providerID,
-                    providerName: providerName,
-                    windowID: windowID,
-                    windowName: windowName,
-                    resetAt: resetAt
+            guard enabled, available, let resetAt else { return }
+
+            if resetAt.timeIntervalSince(now) > minimumLeadTime {
+                notifications.append(
+                    LimitResetNotification(
+                        kind: .atReset,
+                        providerID: providerID,
+                        providerName: providerName,
+                        windowID: windowID,
+                        windowName: windowName,
+                        resetAt: resetAt
+                    )
                 )
-            )
+            }
+
+            for minutes in leadMinutes {
+                let fireAt = resetAt.addingTimeInterval(-Double(minutes * 60))
+                guard fireAt.timeIntervalSince(now) > minimumLeadTime else { continue }
+                notifications.append(
+                    LimitResetNotification(
+                        kind: .leadTime(minutes: minutes),
+                        providerID: providerID,
+                        providerName: providerName,
+                        windowID: windowID,
+                        windowName: windowName,
+                        resetAt: resetAt
+                    )
+                )
+            }
         }
 
         append(
@@ -623,7 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             enabled: state.codexEnabled,
             available: state.codexAvailable,
             providerID: "codex",
-            providerName: "Codex",
+            providerName: "Chat GPT",
             windowID: "session",
             windowName: "session",
             resetAt: state.codexSessionResetAt
@@ -632,13 +716,233 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             enabled: state.codexEnabled,
             available: state.codexAvailable,
             providerID: "codex",
-            providerName: "Codex",
+            providerName: "Chat GPT",
             windowID: "week",
             windowName: "weekly",
             resetAt: state.codexWeekResetAt
         )
 
         return notifications
+    }
+
+    // MARK: - Low-limit notifications
+    //
+    // Unlike reset notifications (which fire at a known future clock time), a
+    // "remaining < threshold" crossing depends on live usage and can only be
+    // detected reactively — checked at the end of every refresh() and whenever
+    // notification settings change live. Each qualifying window fires at most once
+    // per reset cycle (tracked by an identifier keyed on that window's resetAt).
+
+    private struct LowLimitNotification {
+        let providerID: String
+        let providerName: String
+        let windowID: String
+        let windowName: String
+        let resetAt: Date
+        let remainingPercent: Double
+
+        var identifier: String {
+            "\(lowLimitNotificationPrefix)\(providerID).\(windowID).\(Int(resetAt.timeIntervalSince1970))"
+        }
+
+        var title: String {
+            "\(providerName) \(windowName) limit low"
+        }
+
+        var body: String {
+            "Your \(providerName) \(windowName.lowercased()) limit has \(Int(remainingPercent.rounded()))% remaining."
+        }
+    }
+
+    private func reconcileLowLimitNotifications() {
+        guard state.lowLimitNotificationsEnabled else { return }
+
+        let threshold = state.lowLimitThresholdPercent
+        let now = Date()
+        let candidates = currentLowLimitCandidates()
+
+        let due = candidates.filter { candidate in
+            candidate.remainingPercent <= threshold && !lowLimitFiredIdentifiers.contains(candidate.identifier)
+        }
+
+        // Prune fired identifiers whose reset cycle is well in the past so the set
+        // doesn't grow unbounded across a long-running session.
+        lowLimitFiredIdentifiers = Set(lowLimitFiredIdentifiers.filter { identifier in
+            guard let epoch = Double(identifier.split(separator: ".").last ?? "") else { return false }
+            return Date(timeIntervalSince1970: epoch) > now.addingTimeInterval(-86_400)
+        })
+
+        guard !due.isEmpty else { return }
+        for candidate in due { lowLimitFiredIdentifiers.insert(candidate.identifier) }
+        Self.postLowLimitNotifications(due)
+    }
+
+    private nonisolated static func postLowLimitNotifications(_ notifications: [LowLimitNotification]) {
+        func send() {
+            let center = UNUserNotificationCenter.current()
+            for notification in notifications {
+                let content = UNMutableNotificationContent()
+                content.title = notification.title
+                content.body = notification.body
+                content.sound = .default
+                let request = UNNotificationRequest(
+                    identifier: notification.identifier,
+                    content: content,
+                    trigger: nil
+                )
+                center.add(request)
+            }
+        }
+
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                send()
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    guard granted else { return }
+                    send()
+                }
+            case .denied:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private func currentLowLimitCandidates() -> [LowLimitNotification] {
+        let now = Date()
+        var candidates: [LowLimitNotification] = []
+
+        func append(
+            enabled: Bool,
+            available: Bool,
+            providerID: String,
+            providerName: String,
+            windowID: String,
+            windowName: String,
+            resetAt: Date?,
+            remainingPercent: Double
+        ) {
+            // A resetAt in the future anchors the identifier to a specific cycle so
+            // the same dip isn't renotified every poll; without one there's no cycle
+            // boundary to key off, so skip rather than notify only once ever.
+            guard enabled, available, let resetAt, resetAt > now else { return }
+            candidates.append(
+                LowLimitNotification(
+                    providerID: providerID,
+                    providerName: providerName,
+                    windowID: windowID,
+                    windowName: windowName,
+                    resetAt: resetAt,
+                    remainingPercent: remainingPercent
+                )
+            )
+        }
+
+        append(
+            enabled: state.claudeEnabled,
+            available: state.claudeAvailable,
+            providerID: "claude",
+            providerName: "Claude",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.claudeSessionResetAt,
+            remainingPercent: 100 - state.claudeSessionPercent
+        )
+        append(
+            enabled: state.claudeEnabled,
+            available: state.claudeAvailable,
+            providerID: "claude",
+            providerName: "Claude",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.claudeWeekResetAt,
+            remainingPercent: 100 - state.claudeWeekPercent
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-gemini",
+            providerName: "Antigravity Gemini",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.antigravityGeminiSessionResetAt,
+            remainingPercent: state.antigravityGemini5hRemainingPercent
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-gemini",
+            providerName: "Antigravity Gemini",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.antigravityGeminiWeekResetAt,
+            remainingPercent: state.antigravityGeminiWeeklyRemainingPercent
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-claude-gpt",
+            providerName: "Antigravity Claude/GPT",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.antigravityClaudeGptSessionResetAt,
+            remainingPercent: state.antigravityClaudeGpt5hRemainingPercent
+        )
+        append(
+            enabled: state.antigravityEnabled,
+            available: state.antigravityAvailable,
+            providerID: "antigravity-claude-gpt",
+            providerName: "Antigravity Claude/GPT",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.antigravityClaudeGptWeekResetAt,
+            remainingPercent: state.antigravityClaudeGptWeeklyRemainingPercent
+        )
+        append(
+            enabled: state.geminiEnabled,
+            available: state.geminiAvailable,
+            providerID: "gemini",
+            providerName: "Gemini",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.geminiSessionResetAt,
+            remainingPercent: 100 - state.geminiSessionPercent
+        )
+        append(
+            enabled: state.geminiEnabled,
+            available: state.geminiAvailable,
+            providerID: "gemini",
+            providerName: "Gemini",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.geminiWeekResetAt,
+            remainingPercent: 100 - state.geminiWeekPercent
+        )
+        append(
+            enabled: state.codexEnabled,
+            available: state.codexAvailable,
+            providerID: "codex",
+            providerName: "Chat GPT",
+            windowID: "session",
+            windowName: "session",
+            resetAt: state.codexSessionResetAt,
+            remainingPercent: 100 - state.codexSessionPercent
+        )
+        append(
+            enabled: state.codexEnabled,
+            available: state.codexAvailable,
+            providerID: "codex",
+            providerName: "Chat GPT",
+            windowID: "week",
+            windowName: "weekly",
+            resetAt: state.codexWeekResetAt,
+            remainingPercent: 100 - state.codexWeekPercent
+        )
+
+        return candidates
     }
 
 }
