@@ -385,16 +385,45 @@ enum CodexScanner {
         }
     }
 
-    private struct CodexRateLimitWindow: Decodable {
+    private struct CodexRateLimitWindow: Decodable, WindowDurationProviding {
         let usedPercent: Double?
         let resetAt: Double?
         let resetAfterSeconds: Double?
+        let limitWindowSeconds: Double?
+
+        var durationSeconds: Double? { limitWindowSeconds }
 
         enum CodingKeys: String, CodingKey {
             case usedPercent = "used_percent"
             case resetAt = "reset_at"
             case resetAfterSeconds = "reset_after_seconds"
+            case limitWindowSeconds = "limit_window_seconds"
         }
+    }
+
+    /// Some plans (observed on `plan_type: "plus"`) only ever populate
+    /// `primary_window`, with a `limit_window_seconds` of 604800 (7 days) and
+    /// `secondary_window: null` — i.e. the one window OpenAI sends back is the
+    /// weekly cap, not a 5h session cap. Trusting the primary/secondary slot
+    /// positionally then mislabels the week countdown as "Session" (e.g. "in
+    /// 166 hr"). Classify by duration instead: anything under a day is the
+    /// session window, anything at/above is the week window.
+    private protocol WindowDurationProviding {
+        var durationSeconds: Double? { get }
+    }
+
+    private static let sessionWindowMaxSeconds: Double = 24 * 60 * 60
+
+    private static func classifyWindows<T: WindowDurationProviding>(
+        primary: T?, secondary: T?
+    ) -> (session: T?, week: T?) {
+        let windows = [primary, secondary].compactMap { $0 }
+        guard windows.count > 1 else {
+            guard let only = windows.first else { return (nil, nil) }
+            return (only.durationSeconds ?? 0) < sessionWindowMaxSeconds ? (only, nil) : (nil, only)
+        }
+        let sorted = windows.sorted { ($0.durationSeconds ?? 0) < ($1.durationSeconds ?? 0) }
+        return (sorted[0], sorted[1])
     }
 
     private static func fetchCodexRateLimits() async -> CodexRateLimitResult? {
@@ -452,8 +481,7 @@ enum CodexScanner {
 
     private static func mapRateLimits(_ response: CodexUsageResponse) -> CodexRateLimitResult {
         let rateLimit = response.rateLimit
-        let session = rateLimit?.primaryWindow
-        let week = rateLimit?.secondaryWindow
+        let (session, week) = classifyWindows(primary: rateLimit?.primaryWindow, secondary: rateLimit?.secondaryWindow)
 
         return CodexRateLimitResult(
             sessionPercent: session?.usedPercent ?? 0,
@@ -466,7 +494,16 @@ enum CodexScanner {
         )
     }
 
+    /// While no timer is running the API still reports a rolling
+    /// `reset_at` of exactly now + `limit_window_seconds` (the window only
+    /// starts counting on the first request), so a full-window
+    /// `reset_after_seconds` means there is no real countdown to show.
     private static func resetDate(_ window: CodexRateLimitWindow?) -> Date? {
+        if let resetAfterSeconds = window?.resetAfterSeconds,
+           let limitWindowSeconds = window?.limitWindowSeconds,
+           resetAfterSeconds >= limitWindowSeconds {
+            return nil
+        }
         if let resetAt = window?.resetAt, resetAt > 0 {
             return Date(timeIntervalSince1970: resetAt)
         }
@@ -499,13 +536,17 @@ enum CodexScanner {
         let secondary: RolloutWindow?
     }
 
-    private struct RolloutWindow: Decodable {
+    private struct RolloutWindow: Decodable, WindowDurationProviding {
         let usedPercent: Double?
         let resetsAt: Double?
+        let windowMinutes: Double?
+
+        var durationSeconds: Double? { windowMinutes.map { $0 * 60 } }
 
         enum CodingKeys: String, CodingKey {
             case usedPercent = "used_percent"
             case resetsAt = "resets_at"
+            case windowMinutes = "window_minutes"
         }
     }
 
@@ -517,13 +558,14 @@ enum CodexScanner {
             return nil
         }
 
-        let sessionUsed = rateLimits.primary?.usedPercent ?? 0
-        let weekUsed = rateLimits.secondary?.usedPercent ?? 0
+        let (session, week) = classifyWindows(primary: rateLimits.primary, secondary: rateLimits.secondary)
+        let sessionUsed = session?.usedPercent ?? 0
+        let weekUsed = week?.usedPercent ?? 0
         return CodexRateLimitResult(
             sessionPercent: sessionUsed,
-            sessionResetAt: rolloutResetDate(rateLimits.primary),
+            sessionResetAt: rolloutResetDate(session),
             weekPercent: weekUsed,
-            weekResetAt: rolloutResetDate(rateLimits.secondary),
+            weekResetAt: rolloutResetDate(week),
             isLimited: sessionUsed >= 100 || weekUsed >= 100
         )
     }
@@ -568,8 +610,12 @@ enum CodexScanner {
         return latest
     }
 
+    /// Rollout snapshots are written mid-turn, so their `resets_at` reflects a
+    /// timer that was genuinely running — but the newest snapshot can predate
+    /// the window expiring, in which case no timer is running anymore.
     private static func rolloutResetDate(_ window: RolloutWindow?) -> Date? {
-        guard let resetsAt = window?.resetsAt, resetsAt > 0 else { return nil }
+        guard let resetsAt = window?.resetsAt,
+              resetsAt > Date().timeIntervalSince1970 else { return nil }
         return Date(timeIntervalSince1970: resetsAt)
     }
 

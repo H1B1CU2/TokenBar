@@ -36,9 +36,28 @@ private enum SettingsLayout {
     static let cardCornerRadius: CGFloat = windowCornerRadius - cardGutter
 }
 
-// Native vibrancy for the sidebar: `.sidebar`/`.behindWindow` is the same system
-// material Mail/Notes/Reminders use, and it automatically renders as Liquid Glass
-// on macOS 26 without any extra API — the OS re-themes standard materials on Tahoe.
+// The real Liquid Glass surface (macOS 26+): NSGlassEffectView at its defaults —
+// no material substitute, no hand-tuned tint — so the window's transparency is
+// whatever the running OS defines natively, and tracks system changes across
+// releases (macOS 27 included) for free. Shared with the popover (MenuView) so
+// both surfaces read as the same glass.
+@available(macOS 26.0, *)
+struct GlassEffectBackground: NSViewRepresentable {
+    var cornerRadius: CGFloat
+
+    func makeNSView(context: Context) -> NSGlassEffectView {
+        let view = NSGlassEffectView()
+        view.cornerRadius = cornerRadius
+        return view
+    }
+
+    func updateNSView(_ nsView: NSGlassEffectView, context: Context) {
+        nsView.cornerRadius = cornerRadius
+    }
+}
+
+// Pre-Tahoe fallback: `.sidebar`/`.behindWindow` is the closest system material
+// on macOS 14–15, where the glass API doesn't exist.
 private struct VisualEffectView: NSViewRepresentable {
     var material: NSVisualEffectView.Material
     var blendingMode: NSVisualEffectView.BlendingMode
@@ -103,8 +122,12 @@ struct SettingsView: View {
         // The content card floats on top of it, inset 8pt on all sides so the
         // glass forms a gutter around the card as well as behind the sidebar.
         .background {
-            VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
-                .overlay(Color.black.opacity(0.10))
+            if #available(macOS 26.0, *) {
+                GlassEffectBackground(cornerRadius: SettingsLayout.windowCornerRadius)
+            } else {
+                VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
+                    .overlay(Color.black.opacity(0.10))
+            }
         }
         .frame(minWidth: 760, idealWidth: 1_040, minHeight: 560, idealHeight: 720)
         // Extend the glass under the transparent title bar so it reaches the true
@@ -314,6 +337,24 @@ struct SettingsView: View {
             }
             Divider()
             VStack(alignment: .leading, spacing: 7) {
+                Text("Idle Polling")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Picker("", selection: $state.idlePollRate) {
+                    ForEach(IdlePollRate.allCases) { rate in
+                        Text(rate.title).tag(rate)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Text(idlePollCaption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .help("Slows the poll while the popover is closed, when only the menu-bar icon reads it. Opening the popover refreshes immediately. Low-limit notifications fire from a poll, so a slower idle rate can delay them by that much.")
+            Divider()
+            VStack(alignment: .leading, spacing: 7) {
                 Text("First Day of Week")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -326,6 +367,17 @@ struct SettingsView: View {
                 .labelsHidden()
             }
         }
+    }
+
+    // Spell out the resulting cadence — a bare multiplier leaves the user to do the
+    // arithmetic against whichever refresh interval is selected above.
+    private var idlePollCaption: String {
+        guard state.idlePollRate != .off else {
+            return "Polls at the same rate whether the popover is open or closed."
+        }
+        let seconds = Int(state.idleRefreshSeconds.rounded())
+        let interval = seconds % 60 == 0 ? "\(seconds / 60) min" : "\(seconds)s"
+        return "Polls every \(interval) while the popover is closed."
     }
 
     private var providerOrderCard: some View {
@@ -1304,6 +1356,7 @@ extension View {
             .onChange(of: state.useSeparateGraphScale) { onLiveChange() }
             .onChange(of: state.providerOrder) { onLiveChange() }
             .onChange(of: state.refreshInterval) { onLiveChange() }
+            .onChange(of: state.idlePollRate) { onLiveChange() }
             .onChange(of: state.firstDayOfWeek) { onLiveChange() }
     }
 }

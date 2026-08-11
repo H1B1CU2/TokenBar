@@ -31,10 +31,14 @@ struct MenuView: View {
         }
         .padding(CardMetrics.gutter)
         .frame(width: 320)
-        // No explicit background: the popover frame already draws its own material
-        // (spanning the arrow too). Layering another material here only covers the
-        // content rect, and its top edge shows as a flat full-width seam right at
-        // the arrow's base line.
+        // No background of our own: the popover's native chrome already draws body
+        // and arrow as ONE continuous surface. An NSGlassEffectView here covers only
+        // the content rect — never the arrow, which AppKit draws above it — so its
+        // top edge highlight ran across the arrow's base as a hairline that visually
+        // severed the arrow from the popover. On macOS 26+ the built-in popover
+        // material is Liquid Glass anyway, so this still reads as the same surface
+        // family as the Settings window (which keeps its own GlassEffectBackground,
+        // where there is no arrow to cut).
         .onChange(of: state.claudeEnabled) {
             Task { await onRefresh(false) }
         }
@@ -198,7 +202,7 @@ struct MenuView: View {
                 UsageGraphView(
                     history: state.deepseekHistory.mapValues { $0 * 2_000_000.0 },
                     tintColor: .deepseekAccent,
-                    unitFormatter: { formatTokens($0) },
+                    unitFormatter: { deepseekCostText($0) },
                     yAxisMax: state.useSeparateGraphScale ? deepseekTokenMax : globalTokenMax,
                     showTotal: true,
                     firstDayOfWeek: state.firstDayOfWeek
@@ -208,6 +212,16 @@ struct MenuView: View {
         }
     }
 
+    // Header already reads "Antigravity", so drop a redundant prefix from the
+    // scanner message to keep the inline status on one line at 320pt.
+    private var antigravityStatusText: String {
+        guard let err = state.antigravityError else { return "Connecting…" }
+        if err.hasPrefix("Antigravity ") {
+            return String(err.dropFirst("Antigravity ".count))
+        }
+        return err
+    }
+
     private var antigravitySection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -215,6 +229,16 @@ struct MenuView: View {
                 Text("Antigravity")
                     .font(.system(size: 12, weight: .semibold))
                 Spacer()
+                if !state.antigravityAvailable {
+                    // Offline: keep the card to a single row by folding the status
+                    // message into the header instead of stacking it underneath.
+                    Text(antigravityStatusText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(state.antigravityError != nil ? AnyShapeStyle(Color.antigravityGreen) : AnyShapeStyle(.secondary))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .minimumScaleFactor(0.85)
+                }
             }
 
             if state.antigravityAvailable {
@@ -226,14 +250,10 @@ struct MenuView: View {
                 } else {
                     antigravityStackedBlock
                 }
-            }
 
-            if let err = state.antigravityError {
-                Text(err).font(.system(size: 10)).foregroundStyle(Color.antigravityGreen)
-            } else if !state.antigravityAvailable {
-                Text("Connecting to Antigravity…")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                if let err = state.antigravityError {
+                    Text(err).font(.system(size: 10)).foregroundStyle(Color.antigravityGreen)
+                }
             }
 
             if state.antigravityShowLatestThread && !state.antigravityLatestThreads.isEmpty {
@@ -778,6 +798,20 @@ struct MenuView: View {
 
     private func balanceDisplay(_ balance: Double, currency: String) -> String {
         String(format: "%@%.2f", CurrencyFormat.symbol(currency), balance)
+    }
+
+    // Per-day DeepSeek spend for the 7-Day Usage graph. The graph stores cost scaled
+    // into a token-ish range for bar height, so divide back out, apply the live THB
+    // rate when that display is on, and show the money in the account's currency.
+    // Tiny days keep extra precision so a fraction of a cent isn't shown as 0.00.
+    private func deepseekCostText(_ scaledValue: Double) -> String {
+        let cost = scaledValue / 2_000_000.0
+        let money = state.deepseekThbActive ? cost * state.deepseekThbRate : cost
+        let symbol = CurrencyFormat.symbol(state.deepseekDisplayCurrency)
+        if money > 0 && money < 0.01 {
+            return String(format: "%@%.4f", symbol, money)
+        }
+        return String(format: "%@%.2f", symbol, money)
     }
 
     private func resetText(_ date: Date?, compact: Bool, showDuration: Bool = false) -> String? {

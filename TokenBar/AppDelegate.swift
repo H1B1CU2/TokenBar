@@ -15,6 +15,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var pollTimer: Timer?
     private var reducingTimer: Timer?
     private var clickMonitor: Any?
+    private var localClickMonitor: Any?
+    private var popoverClosedAt: Date?
+    // Drives the poll cadence. Explicit rather than reading popover.isShown, which is
+    // mid-transition inside the show/close paths that need to reschedule the timer.
+    private var popoverIsOpen = false
     var state: AppState!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -28,9 +33,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             btn.image = IconRenderer.placeholder()
             btn.action = #selector(togglePopover)
             btn.target = self
+            // Fire on mouse-down so the toggle runs in a fixed order relative to the
+            // click monitors; on mouse-up a monitor could interleave between the two.
+            btn.sendAction(on: [.leftMouseDown])
         }
 
-        popover.behavior = .transient
+        // .applicationDefined, not .transient: a transient popover closes itself on
+        // the status-item mouse-down *before* the button action runs, so togglePopover
+        // would see isShown == false and immediately reopen it — the icon could never
+        // dismiss it. We own every close instead, via the click monitors below.
+        popover.behavior = .applicationDefined
         popover.animates = false
         popover.delegate = self
         let vc = NSHostingController(
@@ -72,11 +84,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
-    // (Re)schedules the background poll at the user's chosen interval. Invalidating
-    // the old timer first is critical — otherwise a new one stacks on it.
+    // Don't re-fetch on open if a poll just landed — otherwise rapid open/close
+    // hammers the provider APIs.
+    private static let popoverOpenRefreshStaleness: TimeInterval = 15
+
+    // With the popover closed, the only consumer of a poll is the menu-bar icon, so
+    // back off to the user's Idle Polling rate and top up when the popover opens.
+    private var currentPollInterval: TimeInterval {
+        popoverIsOpen ? state.refreshInterval.seconds : state.idleRefreshSeconds
+    }
+
+    // (Re)schedules the background poll at the cadence for the popover's current
+    // state. Invalidating the old timer first is critical — otherwise a new one
+    // stacks on it. Called on every open/close so the cadence follows the popover.
     private func startPollTimer() {
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: state.refreshInterval.seconds,
+        pollTimer = Timer.scheduledTimer(withTimeInterval: currentPollInterval,
                                          repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
         }
@@ -85,9 +108,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     @objc private func togglePopover() {
         if popover.isShown {
             closePopover()
-        } else {
-            showPopover()
+            return
         }
+        // Backstop for the reopen bug: if something already closed the popover for
+        // *this* click (a monitor firing before the button action), the click was a
+        // dismissal, not a request to open. Shorter than a double-click interval, so
+        // a deliberate click-outside-then-click-icon still opens normally.
+        if let closedAt = popoverClosedAt, Date().timeIntervalSince(closedAt) < 0.15 {
+            return
+        }
+        showPopover()
     }
 
     private func showPopover() {
@@ -105,6 +135,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             pwin.setFrame(f, display: true)
         }
         startClickMonitor()
+        // Back to the full rate while the numbers are actually on screen, and top up
+        // once immediately — the idle cadence may have left the data several minutes old.
+        popoverIsOpen = true
+        startPollTimer()
+        let stale = state.lastRefreshed.map {
+            Date().timeIntervalSince($0) >= Self.popoverOpenRefreshStaleness
+        } ?? true
+        if stale {
+            Task { await refresh() }
+        }
     }
 
     private func closePopover() {
@@ -112,17 +152,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         stopClickMonitor()
     }
 
-    // .transient doesn't reliably close the popover on an outside click for an
-    // accessory app (its window never becomes key), so watch for mouse-downs in
-    // other apps / the desktop and close it. Clicks on our own status item or inside
-    // the popover are this app's own events, which a global monitor ignores.
+    // Nothing auto-closes an .applicationDefined popover, so we watch clicks
+    // ourselves. The global monitor covers other apps / the desktop; the local one
+    // covers our own windows (e.g. Settings sitting behind the popover), which a
+    // global monitor never sees. Both must ignore clicks on the status item — those
+    // belong to togglePopover, and closing here first recreates the reopen bug.
     private func startClickMonitor() {
         stopClickMonitor()
         clickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
-            self?.closePopover()
+            guard let self, !self.clickIsOnStatusItem() else { return }
+            self.closePopover()
         }
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self else { return event }
+            if event.window !== self.popover.contentViewController?.view.window,
+               !self.clickIsOnStatusItem() {
+                self.closePopover()
+            }
+            return event
+        }
+    }
+
+    // Hit-test the pointer against the status item's screen frame rather than
+    // comparing event.window: a global monitor's events carry no window at all, so
+    // identity checks can't recognise a status-item click and the monitor would
+    // close the popover a moment before the button action reopens it.
+    private func clickIsOnStatusItem() -> Bool {
+        guard let btn = statusItem.button, let win = btn.window else { return false }
+        return win.convertToScreen(btn.convert(btn.bounds, to: nil))
+            .contains(NSEvent.mouseLocation)
     }
 
     private func stopClickMonitor() {
@@ -130,11 +192,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
         }
+        if let monitor = localClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            localClickMonitor = nil
+        }
     }
 
-    // Clean up the monitor however the popover closes (outside click, Settings, etc.).
+    // Clean up the monitor however the popover closes (outside click, Settings, etc.),
+    // and record when — togglePopover uses it to tell a genuine open from a reopen
+    // triggered by the very click that just dismissed the popover.
     func popoverDidClose(_ notification: Notification) {
+        popoverClosedAt = Date()
         stopClickMonitor()
+        // Every close path lands here, so this is the one place that has to drop the
+        // poll back to the idle cadence.
+        popoverIsOpen = false
+        startPollTimer()
     }
 
     private func openSettings() {
@@ -160,10 +233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        // Non-opaque so the sidebar's .behindWindow vibrancy can show real desktop
-        // blur through it (native Liquid Glass on macOS 26). The floating content
-        // card blocks the see-through over its own area via its own material +
-        // tint, regardless of the window's opacity.
+        // Non-opaque so the window's glass background (NSGlassEffectView on
+        // macOS 26+, .behindWindow vibrancy before that) can show real desktop
+        // blur through it. The floating content card blocks the see-through over
+        // its own area via its own opaque fill, regardless of the window's opacity.
         window.isOpaque = false
         window.backgroundColor = .clear
         hosting.view.wantsLayer = true

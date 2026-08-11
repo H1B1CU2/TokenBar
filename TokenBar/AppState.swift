@@ -27,6 +27,28 @@ enum RefreshInterval: Int, CaseIterable, Identifiable {
     }
 }
 
+// How much to slow the poll while the popover is closed — the menu-bar icon is the
+// only consumer then, so a lower cadence saves network calls and wakeups at the cost
+// of icon freshness. The raw value is the multiplier applied to the refresh interval;
+// `.off` (1×) polls at the same rate whether the popover is open or closed.
+enum IdlePollRate: Int, CaseIterable, Identifiable {
+    case off = 1
+    case x2 = 2
+    case x4 = 4
+    case x8 = 8
+
+    var id: Int { rawValue }
+    var multiplier: Double { Double(rawValue) }
+    var title: String {
+        switch self {
+        case .off: return "Off"
+        case .x2:  return "2×"
+        case .x4:  return "4×"
+        case .x8:  return "8×"
+        }
+    }
+}
+
 enum FirstDayOfWeek: String, CaseIterable, Identifiable {
     case sunday
     case monday
@@ -209,6 +231,18 @@ final class AppState {
         didSet { UserDefaults.standard.set(refreshInterval.rawValue, forKey: "refreshInterval") }
     }
 
+    // How much slower to poll while the popover is closed
+    var idlePollRate: IdlePollRate {
+        didSet { UserDefaults.standard.set(idlePollRate.rawValue, forKey: "idlePollRate") }
+    }
+
+    // The cadence that actually runs while the popover is closed. Lives here rather
+    // than in AppDelegate so Settings can show the resulting interval instead of
+    // leaving the user to multiply it out.
+    var idleRefreshSeconds: TimeInterval {
+        refreshInterval.seconds * idlePollRate.multiplier
+    }
+
     // First day of the week setting
     var firstDayOfWeek: FirstDayOfWeek {
         didSet { UserDefaults.standard.set(firstDayOfWeek.rawValue, forKey: "firstDayOfWeek") }
@@ -369,6 +403,8 @@ final class AppState {
         self.useSeparateGraphScale = defaults.bool(forKey: "useSeparateGraphScale")
         self.refreshInterval = (defaults.object(forKey: "refreshInterval") as? Int)
             .flatMap(RefreshInterval.init(rawValue:)) ?? .m1
+        self.idlePollRate = (defaults.object(forKey: "idlePollRate") as? Int)
+            .flatMap(IdlePollRate.init(rawValue:)) ?? .x4
         let fdow = defaults.string(forKey: "firstDayOfWeek")
         self.firstDayOfWeek = fdow.flatMap(FirstDayOfWeek.init(rawValue:)) ?? .sunday
 
