@@ -3,23 +3,65 @@ import AppKit
 import ServiceManagement
 import UniformTypeIdentifiers
 
-enum SettingsTab: String, CaseIterable, Identifiable {
+// One sidebar row = one page. The settings used to live on two pages ("General"
+// and "Providers"), which meant every visit began by scrolling past everything
+// that wasn't the setting being looked for. Splitting by topic — and giving each
+// provider a page of its own — is what System Settings does, and it turns "scroll
+// and scan" into "click the name you already had in mind".
+enum SettingsTab: Hashable, Identifiable {
     case general
-    case providers
-    
-    var id: String { rawValue }
-    
+    case display
+    case notifications
+    case schedule
+    case provider(String)
+
+    var id: String {
+        switch self {
+        case .general: return "general"
+        case .display: return "display"
+        case .notifications: return "notifications"
+        case .schedule: return "schedule"
+        case .provider(let key): return "provider.\(key)"
+        }
+    }
+
+    /// The fixed pages, in sidebar order. Provider rows are built from the user's
+    /// own provider order rather than listed here.
+    static let appTabs: [SettingsTab] = [.general, .display, .notifications, .schedule]
+
     var title: String {
         switch self {
         case .general: return "General"
-        case .providers: return "Providers"
+        case .display: return "Display"
+        case .notifications: return "Notifications"
+        case .schedule: return "Schedule"
+        case .provider(let key): return SettingsTab.providerTitle(key)
         }
     }
-    
+
     var icon: String {
         switch self {
         case .general: return "gearshape"
-        case .providers: return "cpu"
+        case .display: return "slider.horizontal.3"
+        case .notifications: return "bell.badge"
+        case .schedule: return "clock"
+        case .provider: return "cpu"
+        }
+    }
+
+    var providerKey: String? {
+        if case .provider(let key) = self { return key }
+        return nil
+    }
+
+    static func providerTitle(_ key: String) -> String {
+        switch key {
+        case "claude": return "Claude"
+        case "deepseek": return "DeepSeek"
+        case "antigravity": return "Antigravity"
+        case "gemini": return "Gemini"
+        case "codex": return "Chat GPT"
+        default: return key.capitalized
         }
     }
 }
@@ -171,8 +213,16 @@ struct SettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(SettingsTab.allCases) { tab in
+                ForEach(SettingsTab.appTabs) { tab in
                     sidebarRow(for: tab)
+                }
+
+                sidebarSectionHeader("Providers")
+
+                // Provider rows follow the popover's own order, so the two lists
+                // never disagree about where a provider sits.
+                ForEach(state.providerOrder, id: \.self) { provider in
+                    sidebarRow(for: .provider(provider))
                 }
             }
             Spacer()
@@ -180,21 +230,44 @@ struct SettingsView: View {
         .padding(.top, 44)
         .padding([.horizontal, .bottom], 16)
     }
+
+    private func sidebarSectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 11)
+            .padding(.top, 14)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
     
     private func sidebarRow(for tab: SettingsTab) -> some View {
         Button {
             selectedTab = tab
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(selectedTab == tab ? Color.accentColor : .secondary)
-                    .frame(width: 22, height: 22)
+                if let key = tab.providerKey {
+                    ProviderIcon(provider: key, size: 16)
+                        .frame(width: 22, height: 22)
+                        // A disabled provider keeps its row — it is how you re-enable
+                        // it — but reads as off rather than as another live provider.
+                        .opacity(isProviderEnabled(key) ? 1 : 0.4)
+                } else {
+                    Image(systemName: tab.icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(selectedTab == tab ? Color.accentColor : .secondary)
+                        .frame(width: 22, height: 22)
+                }
                 Text(tab.title)
                     .font(.system(size: 13, weight: selectedTab == tab ? .semibold : .medium))
+                    .foregroundStyle(
+                        tab.providerKey.map { isProviderEnabled($0) } == false
+                            ? AnyShapeStyle(.secondary)
+                            : AnyShapeStyle(.foreground)
+                    )
             }
             .padding(.horizontal, 11)
-            .frame(height: 42)
+            .frame(height: tab.providerKey == nil ? 42 : 36)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -206,54 +279,39 @@ struct SettingsView: View {
         .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.primary)
     }
     
+    // Provider pages carry no big title: their card already opens with the icon,
+    // the name, what the integration is, and the enable switch — a heading above it
+    // would just say the name a second time.
     @ViewBuilder private func detailTitleView(for tab: SettingsTab) -> some View {
-        HStack(alignment: .firstTextBaseline) {
+        if tab.providerKey == nil {
             Text(tab.title)
                 .font(.system(size: 24, weight: .bold))
-            Spacer()
-            if tab == .providers {
-                Text("\(enabledProviders.count) enabled")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 4)
         }
-        .padding(.bottom, 4)
     }
     
     @ViewBuilder private func detailPaneView(for tab: SettingsTab) -> some View {
         switch tab {
         case .general:
             generalPane
-        case .providers:
-            providersPane
+        case .display:
+            displaySettingsCard
+        case .notifications:
+            notificationSettingsCard
+        case .schedule:
+            scheduleSettingsCard
+        case .provider(let key):
+            providerCard(for: key)
         }
     }
     
+    // Display, Notifications and Schedule each have a page now, so General is what
+    // is left: how the app starts, and the order everything else is listed in.
     @ViewBuilder private var generalPane: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: SettingsLayout.cardSpacing) {
-                VStack(spacing: SettingsLayout.cardSpacing) {
-                    startupSettingsCard
-                    displaySettingsCard
-                    notificationSettingsCard
-                }
-                .frame(maxWidth: .infinity)
-
-                VStack(spacing: SettingsLayout.cardSpacing) {
-                    scheduleSettingsCard
-                    providerOrderCard
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .frame(minWidth: 680)
-
-            VStack(spacing: SettingsLayout.cardSpacing) {
-                startupSettingsCard
-                displaySettingsCard
-                notificationSettingsCard
-                scheduleSettingsCard
-                providerOrderCard
-            }
+        VStack(spacing: SettingsLayout.cardSpacing) {
+            startupSettingsCard
+            providerOrderCard
         }
     }
 
@@ -304,6 +362,10 @@ struct SettingsView: View {
             settingToggle("Separate Graph Scales",
                           "Scale each provider's usage graph to its own peak instead of sharing a global maximum.",
                           isOn: $state.useSeparateGraphScale)
+            Divider()
+            settingToggle("Two Columns",
+                          "Lay the provider cards out in two columns, widening the popover instead of stacking everything in one tall list.",
+                          isOn: $state.twoColumnLayout)
         }
     }
 
@@ -569,33 +631,6 @@ struct SettingsView: View {
         }
     }
     
-    @ViewBuilder private var providersPane: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: SettingsLayout.cardSpacing) {
-                providerColumn(parity: 0)
-                providerColumn(parity: 1)
-            }
-            .frame(minWidth: 776, maxWidth: .infinity, alignment: .leading)
-
-            VStack(spacing: SettingsLayout.cardSpacing) {
-                ForEach(state.providerOrder, id: \.self) { provider in
-                    providerCard(for: provider)
-                }
-            }
-        }
-    }
-
-    private func providerColumn(parity: Int) -> some View {
-        VStack(spacing: SettingsLayout.cardSpacing) {
-            ForEach(Array(state.providerOrder.enumerated()), id: \.element) { index, provider in
-                if index % 2 == parity {
-                    providerCard(for: provider)
-                }
-            }
-        }
-        .frame(width: 380)
-    }
-
     @ViewBuilder private func providerCard(for provider: String) -> some View {
         if provider == "claude" {
             claudeCard
@@ -661,16 +696,6 @@ struct SettingsView: View {
 
                     Toggle("Show latest thread", isOn: $state.claudeShowLatestThread)
                         .font(.system(size: 12))
-
-                    Toggle(isOn: $state.claudeShowFableUsage) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Show Fable 5 usage")
-                                .font(.system(size: 12))
-                            Text("Fable 5's own weekly limit, as reported by Anthropic's usage API. Hidden when your account has no Fable-specific limit.")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
 
                     Text("Displays your official Claude usage via your Claude Code access token, which is automatically fetched from your secure keychain or credentials file.")
                         .font(.caption2)
@@ -1538,7 +1563,6 @@ extension View {
             .onChange(of: state.claudeSideBySide) { onLiveChange() }
             .onChange(of: state.claudeShowGraph) { onLiveChange() }
             .onChange(of: state.claudeShowLatestThread) { onLiveChange() }
-            .onChange(of: state.claudeShowFableUsage) { onLiveChange() }
     }
 
     private func applyDeepSeekObservers(state: AppState, onLiveChange: @escaping () -> Void) -> some View {

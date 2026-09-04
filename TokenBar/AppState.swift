@@ -117,11 +117,6 @@ final class AppState {
     var claudeAvailable: Bool = false
     var claudeLatestThreads: [ClaudeThreadUsage] = []
 
-    // Fable's own weekly limit utilization (0–100) from the API's model-scoped
-    // limits; nil when the account reports none (the panel hides).
-    var claudeFableWeekPercent: Double? = nil
-    var claudeFableWeekResetAt: Date? = nil
-
     // Gemini — consumer web usage (0–100 used) from gemini.google.com/usage
     var geminiSessionPercent: Double = 0
     var geminiSessionResetAt: Date? = nil
@@ -201,11 +196,6 @@ final class AppState {
         didSet { UserDefaults.standard.set(codexShowLatestThread, forKey: "codexShowLatestThread") }
     }
 
-    // Show the Fable 5 weekly-limit panel in the Claude card
-    var claudeShowFableUsage: Bool {
-        didSet { UserDefaults.standard.set(claudeShowFableUsage, forKey: "claudeShowFableUsage") }
-    }
-
     // Graph display toggles for each provider
     var claudeShowGraph: Bool {
         didSet { UserDefaults.standard.set(claudeShowGraph, forKey: "claudeShowGraph") }
@@ -273,6 +263,12 @@ final class AppState {
             guard let data = try? JSONEncoder().encode(earlyResetEvents) else { return }
             UserDefaults.standard.set(data, forKey: "earlyResetEvents")
         }
+    }
+
+    // Whether to lay the provider cards out in two columns, doubling the popover's
+    // width so a long provider list fits without a tall scroll of a menu.
+    var twoColumnLayout: Bool {
+        didSet { UserDefaults.standard.set(twoColumnLayout, forKey: "twoColumnLayout") }
     }
 
     // Whether to use highest token for each provider as the max height reference separately
@@ -450,7 +446,6 @@ final class AppState {
         self.claudeShowLatestThread = defaults.object(forKey: "claudeShowLatestThread") as? Bool ?? true
         self.antigravityShowLatestThread = defaults.object(forKey: "antigravityShowLatestThread") as? Bool ?? true
         self.codexShowLatestThread = defaults.object(forKey: "codexShowLatestThread") as? Bool ?? true
-        self.claudeShowFableUsage = defaults.object(forKey: "claudeShowFableUsage") as? Bool ?? true
         self.claudeShowGraph = defaults.object(forKey: "claudeShowGraph") as? Bool ?? true
         self.deepseekShowGraph = defaults.object(forKey: "deepseekShowGraph") as? Bool ?? true
         self.antigravityShowGraph = defaults.object(forKey: "antigravityShowGraph") as? Bool ?? true
@@ -465,6 +460,7 @@ final class AppState {
         self.lowLimitNotificationsEnabled = defaults.object(forKey: "lowLimitNotificationsEnabled") as? Bool ?? true
         self.lowLimitThresholdPercent = defaults.object(forKey: "lowLimitThresholdPercent") as? Double ?? 10
         self.earlyResetNotificationsEnabled = defaults.object(forKey: "earlyResetNotificationsEnabled") as? Bool ?? true
+        self.twoColumnLayout = defaults.bool(forKey: "twoColumnLayout")
         self.useSeparateGraphScale = defaults.bool(forKey: "useSeparateGraphScale")
         self.refreshInterval = (defaults.object(forKey: "refreshInterval") as? Int)
             .flatMap(RefreshInterval.init(rawValue:)) ?? .m1
@@ -502,8 +498,6 @@ final class AppState {
             self.claudeWeekPercent = defaults.double(forKey: "claudeWeekPercent")
             self.claudeSessionResetAt = defaults.object(forKey: "claudeSessionResetAt") as? Date
             self.claudeWeekResetAt = defaults.object(forKey: "claudeWeekResetAt") as? Date
-            self.claudeFableWeekPercent = defaults.object(forKey: "claudeFableWeekPercent") as? Double
-            self.claudeFableWeekResetAt = defaults.object(forKey: "claudeFableWeekResetAt") as? Date
         }
 
         // Drop banners that aged out while the app was closed, so a relaunch never
@@ -618,12 +612,6 @@ final class AppState {
         d.set(claudeWeekPercent, forKey: "claudeWeekPercent")
         setOrRemove(claudeSessionResetAt, "claudeSessionResetAt")
         setOrRemove(claudeWeekResetAt, "claudeWeekResetAt")
-        if let fable = claudeFableWeekPercent {
-            d.set(fable, forKey: "claudeFableWeekPercent")
-        } else {
-            d.removeObject(forKey: "claudeFableWeekPercent")
-        }
-        setOrRemove(claudeFableWeekResetAt, "claudeFableWeekResetAt")
         d.set(Date(), forKey: "claudeUsageStoredAt")
     }
 
@@ -632,7 +620,7 @@ final class AppState {
     func clearPersistedClaudeUsage() {
         let d = UserDefaults.standard
         ["claudeSessionPercent", "claudeWeekPercent", "claudeSessionResetAt",
-         "claudeWeekResetAt", "claudeFableWeekPercent", "claudeFableWeekResetAt",
+         "claudeWeekResetAt",
          "claudeUsageStoredAt"].forEach { d.removeObject(forKey: $0) }
     }
 

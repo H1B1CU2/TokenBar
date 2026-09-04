@@ -7,7 +7,7 @@ private let lowLimitNotificationPrefix = "TokenBar.lowLimit."
 private let earlyResetNotificationPrefix = "TokenBar.earlyReset."
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     nonisolated override init() { super.init() }
 
     private var statusItem: NSStatusItem!
@@ -58,7 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 onRefresh: { [weak self] force in await self?.refresh(force: force) },
                 onSettings: { [weak self] in self?.openSettings() },
                 onClaudeSignIn: { [weak self] in self?.beginClaudeSignIn() }
-            )
+            ),
+            state: state
         )
         popover.onClose = { [weak self] in self?.popoverDidClose() }
 
@@ -229,6 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openSettings() {
         endSession()
+        beginRegularActivation()
 
         if let window = settingsWindow {
             window.makeKeyAndOrderFront(nil)
@@ -264,10 +266,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrameAutosaveName("TokenBarSettingsWindow")
         window.isReleasedWhenClosed = false
         window.center()
+        window.delegate = self
         settingsWindow = window
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Activation policy
+    //
+    // The app runs as an accessory (LSUIElement): no Dock icon, no ⌘-Tab entry. That
+    // is right for a menu-bar app with only a popover, but it makes a real window a
+    // trap — clicking the status item deactivates the app, Settings drops behind
+    // whatever is underneath, and there is no Dock tile or app switcher to get it
+    // back, so it reads as having closed itself.
+    //
+    // For as long as a real window is open the app becomes a regular one: Settings
+    // gets a Dock tile and a ⌘-Tab entry, and clicking our own status item no longer
+    // deactivates us, so the window stays where the user left it. The moment the last
+    // window closes it goes back to being an accessory.
+
+    private func beginRegularActivation() {
+        guard NSApp.activationPolicy() != .regular else { return }
+        NSApp.setActivationPolicy(.regular)
+    }
+
+    /// True while any window that should keep the Dock tile alive is on screen.
+    private var hasVisibleAppWindow: Bool {
+        (settingsWindow?.isVisible ?? false) || (claudeSignInWindow?.isVisible ?? false)
+    }
+
+    private func endRegularActivationIfIdle() {
+        // Deferred a runloop turn: the closing window still reports isVisible == true
+        // inside windowWillClose, so the check has to run after AppKit finishes.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.hasVisibleAppWindow else { return }
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === settingsWindow || window === claudeSignInWindow else { return }
+        endRegularActivationIfIdle()
     }
 
     // MARK: - Claude sign-in
@@ -279,6 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// regenerated when the user finally pastes.
     private func beginClaudeSignIn() {
         endSession()
+        beginRegularActivation()
 
         // Re-using a stale window would re-use its dead challenge with it.
         claudeSignInWindow?.close()
@@ -305,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.center()
+        window.delegate = self
         claudeSignInWindow = window
 
         window.makeKeyAndOrderFront(nil)
@@ -314,6 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func closeClaudeSignIn() {
         claudeSignInWindow?.close()
         claudeSignInWindow = nil
+        endRegularActivationIfIdle()
     }
 
     // Settings apply live (no Save button): the moment any setting changes, redraw
@@ -517,8 +561,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.claudeSessionResetAt = claude.sessionResetAt
             state.claudeWeekPercent = claude.weekPercent
             state.claudeWeekResetAt = claude.weekResetAt
-            state.claudeFableWeekPercent = claude.fableWeekPercent
-            state.claudeFableWeekResetAt = claude.fableWeekResetAt
             state.claudeError = nil
             state.persistClaudeUsage()
             claudeBackoffUntil = nil
@@ -539,8 +581,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.claudeSessionResetAt = nil
             state.claudeWeekPercent = 0
             state.claudeWeekResetAt = nil
-            state.claudeFableWeekPercent = nil
-            state.claudeFableWeekResetAt = nil
             state.claudeError = claude.error
             state.clearPersistedClaudeUsage()
             claudeBackoffUntil = nil
@@ -1257,16 +1297,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             resetAt: state.claudeWeekResetAt
         )
         append(
-            enabled: state.claudeEnabled,
-            available: state.claudeAvailable && state.claudeFableWeekPercent != nil,
-            providerID: "claude",
-            providerName: "Claude Fable",
-            windowID: "fable-week",
-            windowName: "weekly",
-            percent: state.claudeFableWeekPercent ?? 0,
-            resetAt: state.claudeFableWeekResetAt
-        )
-        append(
             enabled: state.antigravityEnabled,
             available: state.antigravityAvailable,
             providerID: "antigravity-gemini",
@@ -1608,8 +1638,10 @@ private final class SizingHostingView<Content: View>: NSHostingView<Content> {
 
 @MainActor
 final class GlassMenuPanel {
-    /// Must match MenuView's own `.frame(width:)`.
-    private let popWidth: CGFloat = 320
+    /// Must match MenuView's own `.frame(width:)`, which follows the two-column
+    /// setting — so this is read from the same source rather than pinned here.
+    private var popWidth: CGFloat { MenuLayout.width(twoColumn: state.twoColumnLayout) }
+    private let state: AppState
     private let shellRadius: CGFloat = 20
     private let arrowWidth: CGFloat = 16
     private let arrowHeight: CGFloat = 8
@@ -1635,13 +1667,16 @@ final class GlassMenuPanel {
     /// The window clicks are matched against by the local click monitor.
     var window: NSWindow { panel }
 
-    init(rootView: MenuView) {
+    init(rootView: MenuView, state: AppState) {
+        self.state = state
         shell = PopoverShellView(cornerRadius: shellRadius,
                                  arrowWidth: arrowWidth,
                                  arrowHeight: arrowHeight)
         hosting = SizingHostingView(rootView: rootView)
 
-        root.frame = NSRect(x: 0, y: 0, width: popWidth, height: 200)
+        // `popWidth` reads `state`, which is set but not yet visible to `self` here —
+        // the placeholder is replaced by `show()`'s setContentSize anyway.
+        root.frame = NSRect(x: 0, y: 0, width: MenuLayout.width(twoColumn: state.twoColumnLayout), height: 200)
         shell.frame = root.bounds
         shell.autoresizingMask = [.width, .height]
         root.addSubview(shell)
@@ -1674,7 +1709,12 @@ final class GlassMenuPanel {
         hosting.onSizeChange = { [weak self] in self?.applyContentSize() }
     }
 
+    /// The status item this window was opened from, kept so a live width change can
+    /// re-anchor the arrow without waiting for the next open.
+    private weak var anchorButton: NSStatusBarButton?
+
     func show(relativeTo button: NSStatusBarButton) {
+        anchorButton = button
         // Neither Reduce Transparency nor the Clear/Tinted tint style has a public
         // change notification for the latter, so re-read both on every open.
         shell.refreshAppearance()
@@ -1728,5 +1768,21 @@ final class GlassMenuPanel {
         f.origin.y = f.maxY - size.height
         f.size = size
         panel.setFrame(f, display: true)
+        // The arrow is positioned against the window's width, so a width change (the
+        // two-column toggle) has to move it or it drifts off the status item.
+        realignArrow()
+    }
+
+    /// Re-runs the anchor maths against the current width, keeping the arrow under
+    /// the status item the window was opened from.
+    private func realignArrow() {
+        guard let button = anchorButton,
+              let anchor = menuBarPopoverAnchor(button: button,
+                                                windowSize: panel.frame.size,
+                                                popWidth: popWidth,
+                                                arrowWidth: arrowWidth) else { return }
+        shell.arrowCenterX = anchor.arrowCenterX
+        shell.layoutSubtreeIfNeeded()
+        panel.setFrameOrigin(anchor.origin)
     }
 }

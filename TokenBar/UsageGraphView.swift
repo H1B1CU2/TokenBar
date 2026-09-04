@@ -11,6 +11,11 @@ struct UsageGraphView: View {
     let yAxisMax: Double
     let showTotal: Bool
     let firstDayOfWeek: FirstDayOfWeek
+    /// Extra bar height handed down by the two-column layout so the shorter column
+    /// can be grown to match the taller one. Zero everywhere else.
+    let extraHeight: CGFloat
+
+    private static let baseBarHeight: CGFloat = 50
     
     @State private var hoveredIndex: Int? = nil
     @State private var animate = false
@@ -23,7 +28,8 @@ struct UsageGraphView: View {
         unitFormatter: @escaping (Double) -> String,
         yAxisMax: Double,
         showTotal: Bool = true,
-        firstDayOfWeek: FirstDayOfWeek = .sunday
+        firstDayOfWeek: FirstDayOfWeek = .sunday,
+        extraHeight: CGFloat = 0
     ) {
         self.history = history
         self.history2 = history2
@@ -33,6 +39,7 @@ struct UsageGraphView: View {
         self.yAxisMax = yAxisMax
         self.showTotal = showTotal
         self.firstDayOfWeek = firstDayOfWeek
+        self.extraHeight = extraHeight
     }
     
     private var last7DaysData: [(dateString: String, value: Double)] {
@@ -134,7 +141,7 @@ struct UsageGraphView: View {
                             .shadow(color: (hoveredIndex == index ? (val1 > 0 ? tintColor : (tintColor2 ?? tintColor)) : Color.clear).opacity(0.3), radius: 3, x: 0, y: -1)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         }
-                        .frame(height: 50)
+                        .frame(height: Self.baseBarHeight + max(0, extraHeight))
                         
                         Text(weekdayLabel(item.dateString))
                             .font(.system(size: 9, weight: (hoveredIndex == index || isToday) ? .bold : .medium))

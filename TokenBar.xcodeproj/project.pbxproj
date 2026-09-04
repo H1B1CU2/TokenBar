@@ -11,6 +11,7 @@
 		TB0000000000000000000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000102 /* AppDelegate.swift */; };
 		TB0000000000000000000003 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000103 /* AppState.swift */; };
 		TB0000000000000000000004 /* IconRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000104 /* IconRenderer.swift */; };
+		TB0000000000000000000020 /* ThreadOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000120 /* ThreadOpener.swift */; };
 		TB0000000000000000000005 /* MenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000105 /* MenuView.swift */; };
 		TB0000000000000000000006 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000106 /* SettingsView.swift */; };
 		TB0000000000000000000007 /* ClaudeScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = TB0000000000000000000107 /* ClaudeScanner.swift */; };
@@ -29,6 +30,7 @@
 		TB0000000000000000000102 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		TB0000000000000000000103 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		TB0000000000000000000104 /* IconRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconRenderer.swift; sourceTree = "<group>"; };
+		TB0000000000000000000120 /* ThreadOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadOpener.swift; sourceTree = "<group>"; };
 		TB0000000000000000000105 /* MenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuView.swift; sourceTree = "<group>"; };
 		TB0000000000000000000106 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		TB0000000000000000000107 /* ClaudeScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeScanner.swift; sourceTree = "<group>"; };
@@ -77,6 +79,7 @@
 				TB0000000000000000000102 /* AppDelegate.swift */,
 				TB0000000000000000000103 /* AppState.swift */,
 				TB0000000000000000000104 /* IconRenderer.swift */,
+				TB0000000000000000000120 /* ThreadOpener.swift */,
 				TB0000000000000000000105 /* MenuView.swift */,
 				TB0000000000000000000106 /* SettingsView.swift */,
 				TB0000000000000000000107 /* ClaudeScanner.swift */,
@@ -176,6 +179,7 @@
 				TB0000000000000000000002 /* AppDelegate.swift in Sources */,
 				TB0000000000000000000003 /* AppState.swift in Sources */,
 				TB0000000000000000000004 /* IconRenderer.swift in Sources */,
+				TB0000000000000000000020 /* ThreadOpener.swift in Sources */,
 				TB0000000000000000000005 /* MenuView.swift in Sources */,
 				TB0000000000000000000006 /* SettingsView.swift in Sources */,
 				TB0000000000000000000007 /* ClaudeScanner.swift in Sources */,

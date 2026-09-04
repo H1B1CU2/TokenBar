@@ -65,10 +65,6 @@ struct ClaudeUsage {
     var transient: Bool = false         // temporary failure (429/5xx/network) — keep last data
     var retryAfter: TimeInterval? = nil // server-advised wait from Retry-After (429)
     var latestThreads: [ClaudeThreadUsage] = []  // recent local sessions (independent of the API)
-    // Fable's own weekly limit, from the API's model-scoped `limits` entries.
-    // nil when the account has no Fable-scoped limit (hides the panel).
-    var fableWeekPercent: Double? = nil  // utilization (0–100), same convention as weekPercent
-    var fableWeekResetAt: Date? = nil
     var error: String? = nil
 }
 
@@ -574,7 +570,8 @@ enum ClaudeScanner {
             }
         }
         // Entries in the `limits` array carry model-scoped limits the top-level
-        // windows don't — e.g. Fable's own weekly cap has scope.model "Fable".
+        // windows don't. Nothing reads them today — the decode is kept because it
+        // documents the response shape and costs nothing to leave in place.
         struct Limit: Decodable {
             let percent: Double?
             let resetsAt: String?
@@ -607,12 +604,6 @@ enum ClaudeScanner {
         if let w = r.sevenDay {
             usage.weekPercent = w.utilization ?? 0
             usage.weekResetAt = w.resetsAt.flatMap(parseDate)
-        }
-        if let fable = r.limits?.first(where: {
-            $0.scope?.model?.displayName?.localizedCaseInsensitiveContains("fable") == true
-        }) {
-            usage.fableWeekPercent = fable.percent
-            usage.fableWeekResetAt = fable.resetsAt.flatMap(parseDate)
         }
         return usage
     }

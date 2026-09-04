@@ -5,6 +5,18 @@ import SwiftUI
 // The system popover corner measures as a CIRCULAR arc of 20pt (pixel-fitted
 // from a screenshot), so the shapes below use .circular, not .continuous —
 // a continuous corner of the right radius still leaves an uneven gap.
+/// The popover's outer width, shared with the AppKit panel that hosts it — the two
+/// have to agree or the glass shell and the SwiftUI content disagree on where the
+/// edges are. Two columns is not quite double: the middle gutter is paid once.
+enum MenuLayout {
+    static let singleColumnWidth: CGFloat = 320
+    static let twoColumnWidth: CGFloat = 616
+
+    static func width(twoColumn: Bool) -> CGFloat {
+        twoColumn ? twoColumnWidth : singleColumnWidth
+    }
+}
+
 private enum CardMetrics {
     static let popoverRadius: CGFloat = 20
     static let gutter: CGFloat = 8                            // padding around/between cards
@@ -16,6 +28,16 @@ private enum CardMetrics {
     // bottoms out at 0; clamp to keep a hint of rounding on a mid-card element.
     // Matches the 7-Day Usage graph card's corner radius so inner panels read as one family.
     static let panelRadius: CGFloat = UsageGraphView.cardCornerRadius
+
+    // The vertical rhythm inside a provider card. Every card follows it, so the
+    // first progress bar lands on the same baseline whichever provider drew it —
+    // side-by-side and stacked modes included. These used to be literals repeated
+    // per card and per mode, which is how Antigravity's first bar ended up 6pt
+    // below Claude's: a 10pt section gap against 8, and an 8pt group-title gap
+    // against 4.
+    static let sectionSpacing: CGFloat = 8    // provider header → its content
+    static let groupTitleGap: CGFloat = 4     // group title → its first window row
+    static let windowRowGap: CGFloat = 8      // between stacked Session/Week rows
 }
 
 struct MenuView: View {
@@ -34,7 +56,7 @@ struct MenuView: View {
             footerButtons
         }
         .padding(CardMetrics.gutter)
-        .frame(width: 320)
+        .frame(width: MenuLayout.width(twoColumn: state.twoColumnLayout))
         // No background of our own: the popover's native chrome already draws body
         // and arrow as ONE continuous surface. An NSGlassEffectView here covers only
         // the content rect — never the arrow, which AppKit draws above it — so its
@@ -110,9 +132,46 @@ struct MenuView: View {
         return (lines + ["Click to dismiss."]).joined(separator: "\n")
     }
 
-    private var providerCards: some View {
+    @ViewBuilder private var providerCards: some View {
+        if noProvidersEnabled {
+            Text("No providers enabled — open Settings")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .providerCard()
+        } else if state.twoColumnLayout {
+            // Cards alternate left/right in the user's own provider order. Balancing
+            // by measured height would pack tighter, but it also reshuffles the list
+            // whenever a card grows — and the order is something the user set.
+            HStack(alignment: .top, spacing: CardMetrics.gutter) {
+                providerColumn(index: 0, providers(inColumn: 0))
+                providerColumn(index: 1, providers(inColumn: 1))
+            }
+            .onPreferenceChange(ColumnHeightKey.self) { heights in
+                columnNaturalHeights = heights
+            }
+        } else {
+            providerColumn(index: 0, enabledProviders)
+        }
+    }
+
+    /// The provider order with the disabled ones removed, so the two columns split
+    /// what is actually on screen rather than leaving a hole where a card would be.
+    private var enabledProviders: [String] {
+        state.providerOrder.filter { provider in
+            switch provider {
+            case "claude": return state.claudeEnabled
+            case "deepseek": return state.deepseekEnabled
+            case "antigravity": return state.antigravityEnabled
+            case "gemini": return state.geminiEnabled
+            case "codex": return state.codexEnabled
+            default: return false
+            }
+        }
+    }
+
+    private func providerColumn(index: Int, _ providers: [String]) -> some View {
         VStack(alignment: .leading, spacing: CardMetrics.gutter) {
-            ForEach(state.providerOrder, id: \.self) { provider in
+            ForEach(providers, id: \.self) { provider in
                 if provider == "claude" {
                     claudeBlock
                 } else if provider == "deepseek" {
@@ -125,13 +184,84 @@ struct MenuView: View {
                     codexBlock
                 }
             }
-            if !state.claudeEnabled && !state.deepseekEnabled && !state.antigravityEnabled && !state.geminiEnabled && !state.codexEnabled {
-                Text("No providers enabled — open Settings")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .providerCard()
-            }
         }
+        .frame(maxWidth: .infinity, alignment: .top)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ColumnHeightKey.self,
+                    // Report the height this column WOULD have with no stretch: the
+                    // stretch is what the measurement drives, so feeding the stretched
+                    // height back in would chase its own tail and never settle.
+                    value: [index: proxy.size.height - totalStretch(inColumn: index)]
+                )
+            }
+        )
+    }
+
+    // MARK: - Column balancing
+    //
+    // Two columns of cards almost never come out the same height, and the ragged
+    // bottom edge is the first thing the eye lands on. The usage graphs are the only
+    // element here that can absorb slack without distorting — a bar chart is as
+    // readable at 70pt as at 50 — so the shorter column's graphs grow to close the
+    // gap. Split evenly when a column has more than one, since one stretched graph
+    // beside a normal one looks like a mistake rather than a layout.
+
+    private struct ColumnHeightKey: PreferenceKey {
+        static let defaultValue: [Int: CGFloat] = [:]
+        static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+            value.merge(nextValue()) { _, new in new }
+        }
+    }
+
+    /// Whether this provider's card is currently drawing a usage graph — only those
+    /// can take up slack, so only those are counted when dividing it.
+    private func drawsGraph(_ provider: String) -> Bool {
+        switch provider {
+        case "claude": return state.claudeEnabled && state.claudeShowGraph
+        case "deepseek": return state.deepseekEnabled && state.deepseekAvailable && state.deepseekShowGraph
+        case "antigravity": return state.antigravityEnabled && state.antigravityAvailable && state.antigravityShowGraph
+        case "gemini": return state.geminiEnabled && state.geminiAvailable && state.geminiShowGraph
+        case "codex": return state.codexEnabled && state.codexAvailable && state.codexShowGraph
+        default: return false
+        }
+    }
+
+    private func providers(inColumn index: Int) -> [String] {
+        enabledProviders.enumerated()
+            .filter { $0.offset % 2 == index }
+            .map(\.element)
+    }
+
+    /// How much taller each graph in this column has to be to square the two off.
+    private func graphStretch(inColumn index: Int) -> CGFloat {
+        guard state.twoColumnLayout,
+              let mine = columnNaturalHeights[index],
+              let other = columnNaturalHeights[1 - index]
+        else { return 0 }
+
+        let deficit = other - mine
+        // Sub-pixel differences aren't worth a relayout, and chasing them is how a
+        // measurement loop starts oscillating.
+        guard deficit > 1 else { return 0 }
+
+        let graphs = providers(inColumn: index).filter(drawsGraph).count
+        guard graphs > 0 else { return 0 }
+        return deficit / CGFloat(graphs)
+    }
+
+    private func totalStretch(inColumn index: Int) -> CGFloat {
+        let graphs = providers(inColumn: index).filter(drawsGraph).count
+        return graphStretch(inColumn: index) * CGFloat(graphs)
+    }
+
+    /// The stretch to hand a given provider's graph, found from the column it sits in.
+    private func graphStretch(for provider: String) -> CGFloat {
+        guard state.twoColumnLayout,
+              let position = enabledProviders.firstIndex(of: provider)
+        else { return 0 }
+        return graphStretch(inColumn: position % 2)
     }
 
     @ViewBuilder private var claudeBlock: some View {
@@ -165,7 +295,7 @@ struct MenuView: View {
     }
 
     private var claudeSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: CardMetrics.sectionSpacing) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: "claude", size: 18)
                 Text("Claude")
@@ -175,25 +305,28 @@ struct MenuView: View {
 
             if state.claudeSideBySide {
                 HStack(alignment: .top, spacing: 12) {
-                    claudeGroupColumn
-                    if showFablePanel {
-                        Divider()
-                        fableGroupColumn
-                    }
+                    claudeWindowRow("Session",
+                                    percent: state.claudeSessionPercent,
+                                    reset: state.claudeSessionResetAt)
+                    Divider()
+                    claudeWindowRow("Week",
+                                    percent: state.claudeWeekPercent,
+                                    reset: state.claudeWeekResetAt)
                 }
                 .fixedSize(horizontal: false, vertical: true)
             } else {
-                claudeGroupRow
-                if showFablePanel {
-                    Divider()
-                    fableGroupRow
-                }
+                claudeWindowRow("Session",
+                                percent: state.claudeSessionPercent,
+                                reset: state.claudeSessionResetAt)
+                claudeWindowRow("Week",
+                                percent: state.claudeWeekPercent,
+                                reset: state.claudeWeekResetAt)
             }
 
             if state.claudeShowLatestThread && !state.claudeLatestThreads.isEmpty {
                 latestThreadsPanel(state.claudeLatestThreads.map {
                     ThreadDisplay(id: $0.id, title: $0.title, status: $0.status)
-                })
+                }, provider: .claude)
             }
 
             if let err = state.claudeError {
@@ -207,7 +340,8 @@ struct MenuView: View {
                     unitFormatter: { formatTokens($0) },
                     yAxisMax: state.useSeparateGraphScale ? claudeTokenMax : globalTokenMax,
                     showTotal: true,
-                    firstDayOfWeek: state.firstDayOfWeek
+                    firstDayOfWeek: state.firstDayOfWeek,
+                    extraHeight: graphStretch(for: "claude")
                 )
                 .padding(.top, 4)
             }
@@ -244,7 +378,7 @@ struct MenuView: View {
     }
 
     private var deepseekSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: CardMetrics.sectionSpacing) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: "deepseek", size: 18)
                 Text("DeepSeek")
@@ -287,7 +421,8 @@ struct MenuView: View {
                     unitFormatter: { deepseekCostText($0) },
                     yAxisMax: state.useSeparateGraphScale ? deepseekTokenMax : globalTokenMax,
                     showTotal: true,
-                    firstDayOfWeek: state.firstDayOfWeek
+                    firstDayOfWeek: state.firstDayOfWeek,
+                    extraHeight: graphStretch(for: "deepseek")
                 )
             }
 
@@ -361,7 +496,7 @@ struct MenuView: View {
     }
 
     private var antigravitySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: CardMetrics.sectionSpacing) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: "antigravity", size: 18)
                 Text("Antigravity")
@@ -397,7 +532,7 @@ struct MenuView: View {
             if state.antigravityShowLatestThread && !state.antigravityLatestThreads.isEmpty {
                 latestThreadsPanel(state.antigravityLatestThreads.map {
                     ThreadDisplay(id: $0.id, title: $0.title, status: $0.status)
-                })
+                }, provider: .antigravity)
             }
 
             if state.antigravityAvailable && state.antigravityShowGraph {
@@ -409,7 +544,8 @@ struct MenuView: View {
                     unitFormatter: { formatTokens($0) },
                     yAxisMax: state.useSeparateGraphScale ? (state.antigravityFusedGraph ? fusedAntigravityTokenMax : max(geminiTokenMax, claudeGptTokenMax)) : globalTokenMax,
                     showTotal: true,
-                    firstDayOfWeek: state.firstDayOfWeek
+                    firstDayOfWeek: state.firstDayOfWeek,
+                    extraHeight: graphStretch(for: "antigravity")
                 )
                 .padding(.top, 4)
             }
@@ -417,7 +553,7 @@ struct MenuView: View {
     }
 
     private var geminiSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: CardMetrics.sectionSpacing) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: "gemini", size: 18)
                 Text("Gemini")
@@ -462,7 +598,8 @@ struct MenuView: View {
                     unitFormatter: { formatTokens($0) },
                     yAxisMax: state.useSeparateGraphScale ? geminiWebTokenMax : globalTokenMax,
                     showTotal: true,
-                    firstDayOfWeek: state.firstDayOfWeek
+                    firstDayOfWeek: state.firstDayOfWeek,
+                    extraHeight: graphStretch(for: "gemini")
                 )
                 .padding(.top, 4)
             }
@@ -470,7 +607,7 @@ struct MenuView: View {
     }
 
     private var codexSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: CardMetrics.sectionSpacing) {
             HStack(spacing: 8) {
                 ProviderIcon(provider: "codex", size: 18)
                 Text("Chat GPT")
@@ -502,7 +639,7 @@ struct MenuView: View {
                 if state.codexShowLatestThread && !state.codexLatestThreads.isEmpty {
                     latestThreadsPanel(state.codexLatestThreads.map {
                         ThreadDisplay(id: $0.id, title: $0.title, status: $0.status)
-                    })
+                    }, provider: .codex)
                 }
             }
 
@@ -521,7 +658,8 @@ struct MenuView: View {
                     unitFormatter: { formatTokens($0) },
                     yAxisMax: state.useSeparateGraphScale ? codexTokenMax : globalTokenMax,
                     showTotal: true,
-                    firstDayOfWeek: state.firstDayOfWeek
+                    firstDayOfWeek: state.firstDayOfWeek,
+                    extraHeight: graphStretch(for: "codex")
                 )
                 .padding(.top, 4)
             }
@@ -603,7 +741,7 @@ struct MenuView: View {
 
     @ViewBuilder private var antigravityStackedBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
-            antigravityRow("Gemini Models",
+            antigravityRow("Gemini",
                            session: state.antigravityGeminiSessionPercent,
                            sessionReset: state.antigravityGeminiSessionResetAt,
                            week: state.antigravityGeminiWeekPercent,
@@ -612,7 +750,7 @@ struct MenuView: View {
 
             Divider()
 
-            antigravityRow("Claude & GPT Models",
+            antigravityRow("Claude & GPT",
                            session: state.antigravityClaudeGptSessionPercent,
                            sessionReset: state.antigravityClaudeGptSessionResetAt,
                            week: state.antigravityClaudeGptWeekPercent,
@@ -623,32 +761,36 @@ struct MenuView: View {
 
     @ViewBuilder private var antigravitySideBlock: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Gemini Models")
+            VStack(alignment: .leading, spacing: CardMetrics.groupTitleGap) {
+                Text("Gemini")
                     .font(.system(size: 11, weight: .bold))
-                antigravityWindowRow("Session",
-                                    percent: state.antigravityGeminiSessionPercent,
-                                    reset: state.antigravityGeminiSessionResetAt,
-                                    accentColor: .antigravityGreen)
-                antigravityWindowRow("Week",
-                                    percent: state.antigravityGeminiWeekPercent,
-                                    reset: state.antigravityGeminiWeekResetAt,
-                                    accentColor: .antigravityGreen)
+                VStack(alignment: .leading, spacing: CardMetrics.windowRowGap) {
+                    antigravityWindowRow("Session",
+                                        percent: state.antigravityGeminiSessionPercent,
+                                        reset: state.antigravityGeminiSessionResetAt,
+                                        accentColor: .antigravityGreen)
+                    antigravityWindowRow("Week",
+                                        percent: state.antigravityGeminiWeekPercent,
+                                        reset: state.antigravityGeminiWeekResetAt,
+                                        accentColor: .antigravityGreen)
+                }
             }
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Claude & GPT Models")
+            VStack(alignment: .leading, spacing: CardMetrics.groupTitleGap) {
+                Text("Claude & GPT")
                     .font(.system(size: 11, weight: .bold))
-                antigravityWindowRow("Session",
-                                    percent: state.antigravityClaudeGptSessionPercent,
-                                    reset: state.antigravityClaudeGptSessionResetAt,
-                                    accentColor: .antigravityGreen)
-                antigravityWindowRow("Week",
-                                    percent: state.antigravityClaudeGptWeekPercent,
-                                    reset: state.antigravityClaudeGptWeekResetAt,
-                                    accentColor: .antigravityGreen)
+                VStack(alignment: .leading, spacing: CardMetrics.windowRowGap) {
+                    antigravityWindowRow("Session",
+                                        percent: state.antigravityClaudeGptSessionPercent,
+                                        reset: state.antigravityClaudeGptSessionResetAt,
+                                        accentColor: .antigravityGreen)
+                    antigravityWindowRow("Week",
+                                        percent: state.antigravityClaudeGptWeekPercent,
+                                        reset: state.antigravityClaudeGptWeekResetAt,
+                                        accentColor: .antigravityGreen)
+                }
             }
         }
     }
@@ -661,7 +803,7 @@ struct MenuView: View {
         weekReset: Date?,
         accentColor: Color
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: CardMetrics.groupTitleGap) {
             Text(title)
                 .font(.system(size: 11, weight: .bold))
 
@@ -720,27 +862,89 @@ struct MenuView: View {
         let status: String
     }
 
-    private func latestThreadsPanel(_ threads: [ThreadDisplay]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    // Which row the pointer is over, so only that one lifts. Nil when the pointer is
+    // outside the panel entirely.
+    @State private var hoveredThreadID: String? = nil
+
+    /// Each column's height with no stretch applied, reported by the columns
+    /// themselves. Empty until the first layout pass, which is why every stretch
+    /// calculation treats a missing entry as "don't stretch yet".
+    @State private var columnNaturalHeights: [Int: CGFloat] = [:]
+
+    /// A row is a button when the owning app can be handed the thread id, and plain
+    /// text when it can't — no hover lift, no pointer change, nothing promising a
+    /// jump that won't happen.
+    @ViewBuilder
+    private func threadRow(
+        _ thread: ThreadDisplay,
+        provider: ThreadOpener.Provider,
+        openable: Bool
+    ) -> some View {
+        let content = HStack(spacing: 6) {
+            Text(thread.title)
+                .font(.system(size: 11, weight: .semibold))
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            HStack(spacing: 3) {
+                Circle()
+                    .fill(threadStatusColor(thread.status))
+                    .frame(width: 5, height: 5)
+                Text(thread.status)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .fixedSize()
+        }
+
+        if openable {
+            Button {
+                ThreadOpener.open(provider, threadID: thread.id)
+            } label: {
+                content
+                    // The hit area has to span the panel's full width, and the tint
+                    // has to bleed past the row's own bounds to read as a row rather
+                    // than a box drawn around the text.
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(Color.primary.opacity(hoveredThreadID == thread.id ? 0.07 : 0))
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, -4)
+            .onHover { inside in
+                hoveredThreadID = inside ? thread.id : (hoveredThreadID == thread.id ? nil : hoveredThreadID)
+            }
+            .help(openHelpText(provider))
+        } else {
+            content
+        }
+    }
+
+    private func openHelpText(_ provider: ThreadOpener.Provider) -> String {
+        switch provider {
+        case .claude: return "Open this session in Claude"
+        case .codex:  return "Open this thread in ChatGPT"
+        // Antigravity ships no per-conversation URL route, so say what will actually
+        // happen instead of implying the click lands on this thread.
+        case .antigravity: return "Open Antigravity"
+        }
+    }
+
+    private func latestThreadsPanel(
+        _ threads: [ThreadDisplay],
+        provider: ThreadOpener.Provider
+    ) -> some View {
+        let openable = ThreadOpener.canOpen(provider)
+        return VStack(alignment: .leading, spacing: 4) {
             Text("Latest Threads")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
             ForEach(threads) { thread in
-                HStack(spacing: 6) {
-                    Text(thread.title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .lineLimit(1)
-                    Spacer(minLength: 6)
-                    HStack(spacing: 3) {
-                        Circle()
-                            .fill(threadStatusColor(thread.status))
-                            .frame(width: 5, height: 5)
-                        Text(thread.status)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    .fixedSize()
-                }
+                threadRow(thread, provider: provider, openable: openable)
             }
         }
         .padding(.horizontal, 8)
@@ -770,71 +974,6 @@ struct MenuView: View {
                 compact: state.claudeSideBySide,
                 isSession: title == "Session"
             )
-        }
-    }
-
-    // MARK: - Claude/Fable 5 Layout Modes
-    //
-    // Mirrors Antigravity's group layout (antigravityRow / antigravitySideBlock):
-    // "Claude" and "Fable 5" are two model groups, each showing its own Session+Week.
-    // claudeSideBySide flips the axis — side-by-side arranges the two GROUPS as
-    // columns (Session/Week stacked within each column, one Divider between groups);
-    // stacked arranges the two groups vertically (Session/Week side-by-side within
-    // each group, one Divider between groups).
-
-    private var claudeGroupRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Claude")
-                .font(.system(size: 11, weight: .bold))
-            HStack(alignment: .top, spacing: 12) {
-                claudeWindowRow("Session",
-                                percent: state.claudeSessionPercent,
-                                reset: state.claudeSessionResetAt)
-                Divider()
-                claudeWindowRow("Week",
-                                percent: state.claudeWeekPercent,
-                                reset: state.claudeWeekResetAt)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // Fable's weekly limit comes from the API's model-scoped limits — only some
-    // accounts have one, so the panel hides when the API doesn't report it.
-    private var showFablePanel: Bool {
-        state.claudeShowFableUsage && state.claudeFableWeekPercent != nil
-    }
-
-    private var fableGroupRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Fable 5")
-                .font(.system(size: 11, weight: .bold))
-            claudeWindowRow("Week",
-                            percent: state.claudeFableWeekPercent ?? 0,
-                            reset: state.claudeFableWeekResetAt)
-        }
-    }
-
-    private var claudeGroupColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Claude")
-                .font(.system(size: 11, weight: .bold))
-            claudeWindowRow("Session",
-                            percent: state.claudeSessionPercent,
-                            reset: state.claudeSessionResetAt)
-            claudeWindowRow("Week",
-                            percent: state.claudeWeekPercent,
-                            reset: state.claudeWeekResetAt)
-        }
-    }
-
-    private var fableGroupColumn: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Fable 5")
-                .font(.system(size: 11, weight: .bold))
-            claudeWindowRow("Week",
-                            percent: state.claudeFableWeekPercent ?? 0,
-                            reset: state.claudeFableWeekResetAt)
         }
     }
 
@@ -961,13 +1100,41 @@ struct MenuView: View {
     }
 
     private var footerButtons: some View {
-        // No Refresh button: every setting that affects the data already refreshes on
-        // change, the poll runs on its own cadence, and opening the menu tops up a
-        // stale reading — so the button only ever repeated work that had just happened.
         HStack(spacing: 4) {
             earlyResetNotice
 
             Spacer(minLength: 9)
+
+            Button {
+                // force: a manual refresh is the user overriding the poll cadence, so
+                // it has to bypass the rate-limit backoff the automatic path respects.
+                Task { await onRefresh(true) }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .disabled(state.isLoading)
+            .help("Refresh now")
+            .accessibilityLabel("Refresh now")
+
+            // Settings sits rightmost, where a gear is conventionally looked for, which
+            // leaves Quit between it and Refresh. Quit is the one destructive control
+            // here, so it gets a wider gap on both sides than the 4pt the row uses.
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Quit TokenBar")
+            .accessibilityLabel("Quit TokenBar")
+            .padding(.horizontal, 5)
 
             Button {
                 onSettings()
@@ -980,18 +1147,6 @@ struct MenuView: View {
             .foregroundStyle(.secondary)
             .help("Settings")
             .accessibilityLabel("Settings")
-
-            Button {
-                NSApp.terminate(nil)
-            } label: {
-                Image(systemName: "power")
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Quit TokenBar")
-            .accessibilityLabel("Quit TokenBar")
         }
         .font(.system(size: 11, weight: .medium))
         // Deliberately not a card: the footer is chrome, not content. It keeps the
