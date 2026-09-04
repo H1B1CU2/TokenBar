@@ -67,6 +67,45 @@ enum LimitResetLeadMinutes {
     static let options: [Int] = [60, 30, 15, 10, 5]
 }
 
+// A weekly window that rolled over BEFORE the reset time the provider had
+// announced — the provider granting fresh quota by hand, in practice. Detected by
+// comparing consecutive polls (see AppDelegate.detectEarlyLimitResets), surfaced
+// as a popover banner and a notification, and forgotten once `expiresAt` passes
+// or the user dismisses it.
+struct EarlyResetEvent: Codable, Identifiable, Equatable {
+    let providerID: String
+    let providerName: String
+    let windowID: String
+    let windowName: String
+    /// The reset time the provider was still advertising when the window rolled.
+    let expectedResetAt: Date
+    let detectedAt: Date
+
+    // Keyed on the cycle that was cut short, so re-detecting the same event (a
+    // relaunch replaying the same snapshot) can't stack duplicate banners.
+    var id: String { "\(providerID).\(windowID).\(Int(expectedResetAt.timeIntervalSince1970))" }
+
+    // Banners are news, not history: a day is long enough for the user to see it
+    // across a few popover openings without it becoming permanent chrome.
+    var expiresAt: Date { detectedAt.addingTimeInterval(24 * 60 * 60) }
+
+    /// The provider brand alone, with the model group dropped — `providerName` names
+    /// the tracked window ("Antigravity Claude/GPT"), which is more than the footer's
+    /// one line can hold and more than the notice needs to identify itself.
+    var brandName: String {
+        if providerID.hasPrefix("antigravity") { return "Antigravity" }
+        if providerID.hasPrefix("claude") { return "Claude" }
+        return providerName
+    }
+
+    /// Footer-sized: the notice shares one row with the settings and quit buttons, so
+    /// the window kind is dropped too (only weekly windows are detected anyway).
+    var bannerText: String { "\(brandName) reset early" }
+
+    /// The full phrasing, for the tooltip and notification where width is free.
+    var detailText: String { "\(providerName) \(windowName) limit reset early" }
+}
+
 
 @Observable
 final class AppState {
@@ -221,6 +260,21 @@ final class AppState {
         didSet { UserDefaults.standard.set(lowLimitThresholdPercent, forKey: "lowLimitThresholdPercent") }
     }
 
+    // Whether to notify when a weekly limit rolls over ahead of its announced reset.
+    var earlyResetNotificationsEnabled: Bool {
+        didSet { UserDefaults.standard.set(earlyResetNotificationsEnabled, forKey: "earlyResetNotificationsEnabled") }
+    }
+
+    // Live banner feed for those early resets. Persisted so the banner survives a
+    // relaunch inside its 24h window — an early reset detected while the popover was
+    // closed is exactly the case worth still showing.
+    var earlyResetEvents: [EarlyResetEvent] = [] {
+        didSet {
+            guard let data = try? JSONEncoder().encode(earlyResetEvents) else { return }
+            UserDefaults.standard.set(data, forKey: "earlyResetEvents")
+        }
+    }
+
     // Whether to use highest token for each provider as the max height reference separately
     var useSeparateGraphScale: Bool {
         didSet { UserDefaults.standard.set(useSeparateGraphScale, forKey: "useSeparateGraphScale") }
@@ -263,6 +317,16 @@ final class AppState {
         guard index >= 0 && index < providerOrder.count - 1 else { return }
         providerOrder.swapAt(index, index + 1)
     }
+
+    // Order of the panels inside the DeepSeek card, same shape as providerOrder:
+    // ids rather than indices, so a panel added in a later build appends instead of
+    // shuffling what the user already arranged, and an id from an older build that
+    // no longer exists is dropped rather than rendering as a gap.
+    var deepseekPanelOrder: [String] {
+        didSet { UserDefaults.standard.set(deepseekPanelOrder, forKey: "deepseekPanelOrder") }
+    }
+
+    static let defaultDeepseekPanelOrder = ["billing", "graph", "balance"]
 
     // DeepSeek
     var deepseekBalance: Double? = nil
@@ -400,6 +464,7 @@ final class AppState {
         self.limitResetLeadMinutes = Set(defaults.array(forKey: "limitResetLeadMinutes") as? [Int] ?? [])
         self.lowLimitNotificationsEnabled = defaults.object(forKey: "lowLimitNotificationsEnabled") as? Bool ?? true
         self.lowLimitThresholdPercent = defaults.object(forKey: "lowLimitThresholdPercent") as? Double ?? 10
+        self.earlyResetNotificationsEnabled = defaults.object(forKey: "earlyResetNotificationsEnabled") as? Bool ?? true
         self.useSeparateGraphScale = defaults.bool(forKey: "useSeparateGraphScale")
         self.refreshInterval = (defaults.object(forKey: "refreshInterval") as? Int)
             .flatMap(RefreshInterval.init(rawValue:)) ?? .m1
@@ -416,6 +481,14 @@ final class AppState {
             }
         }
         self.providerOrder = order
+
+        let defaultPanels = AppState.defaultDeepseekPanelOrder
+        var panels = (defaults.stringArray(forKey: "deepseekPanelOrder") ?? defaultPanels)
+            .filter(defaultPanels.contains)
+        for panel in defaultPanels where !panels.contains(panel) {
+            panels.append(panel)
+        }
+        self.deepseekPanelOrder = panels
         self.deepseekApiKey = KeychainHelper.load(key: "deepseekApiKey") ?? ""
         self.deepseekShowTHB = defaults.bool(forKey: "deepseekShowTHB")
         self.deepseekThbRate = defaults.double(forKey: "deepseekThbRate")
@@ -431,6 +504,13 @@ final class AppState {
             self.claudeWeekResetAt = defaults.object(forKey: "claudeWeekResetAt") as? Date
             self.claudeFableWeekPercent = defaults.object(forKey: "claudeFableWeekPercent") as? Double
             self.claudeFableWeekResetAt = defaults.object(forKey: "claudeFableWeekResetAt") as? Date
+        }
+
+        // Drop banners that aged out while the app was closed, so a relaunch never
+        // resurrects week-old news.
+        if let data = defaults.data(forKey: "earlyResetEvents"),
+           let stored = try? JSONDecoder().decode([EarlyResetEvent].self, from: data) {
+            self.earlyResetEvents = stored.filter { $0.expiresAt > Date() }
         }
 
         self.claudeHistory = defaults.dictionary(forKey: "claudeHistory") as? [String: Double] ?? [:]

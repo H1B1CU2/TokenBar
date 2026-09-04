@@ -11,8 +11,7 @@ private enum CardMetrics {
     static let cardRadius: CGFloat = popoverRadius - gutter
     static let cardPaddingH: CGFloat = 12
     static let cardPaddingV: CGFloat = 10
-    static let footerInset: CGFloat = 4                       // buttons inside the footer card
-    static let footerButtonRadius: CGFloat = cardRadius - footerInset
+    static let footerInset: CGFloat = 4                       // vertical breathing room under the last card
     // The threads panel sits cardPaddingH from the corner, so the strict rule
     // bottoms out at 0; clamp to keep a hint of rounding on a mid-card element.
     // Matches the 7-Day Usage graph card's corner radius so inner panels read as one family.
@@ -23,9 +22,14 @@ struct MenuView: View {
     @State var state: AppState
     let onRefresh: (Bool) async -> Void   // force: bypass rate-limit backoff/coalescing
     let onSettings: () -> Void
+    /// Starts the Claude OAuth flow. Reached only through the error row below —
+    /// the moment the user is told they are signed out is the moment the fix
+    /// should be one click away, not buried in Settings.
+    let onClaudeSignIn: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: CardMetrics.gutter) {
+            header
             providerCards
             footerButtons
         }
@@ -57,6 +61,54 @@ struct MenuView: View {
     }
 
     // MARK: - Sections
+
+    /// Compact notice for weekly limits that rolled over ahead of their announced
+    /// reset. It lives in the footer's empty left half rather than in a card of its
+    /// own: it is chrome about the data, not a reading, and the footer is the one row
+    /// with space to spare. Clicking it dismisses; the tooltip carries the detail the
+    /// single line has no room for.
+    @ViewBuilder private var earlyResetNotice: some View {
+        let events = state.earlyResetEvents.sorted { $0.detectedAt > $1.detectedAt }
+        if let latest = events.first {
+            Button {
+                state.earlyResetEvents.removeAll()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(latest.bannerText)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    // More than one at once is rare (two providers resetting in the
+                    // same poll), so a count beats stacking rows in a chrome strip.
+                    if events.count > 1 {
+                        Text("+\(events.count - 1)")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                // Footer grey, matching the gear and power icons beside it: this row is
+                // chrome, and an accent-tinted strip here read as an alert competing
+                // with the provider cards above.
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(earlyResetTooltip(events))
+            .accessibilityLabel(latest.bannerText)
+        }
+    }
+
+    private func earlyResetTooltip(_ events: [EarlyResetEvent]) -> String {
+        let formatter = DateFormatter()
+        // Weekly resets land days out, so the day matters as much as the clock time.
+        formatter.setLocalizedDateFormatFromTemplate("EEE jm")
+        let lines = events.map { event in
+            "\(event.detailText) — was not due until \(formatter.string(from: event.expectedResetAt))"
+        }
+        return (lines + ["Click to dismiss."]).joined(separator: "\n")
+    }
 
     private var providerCards: some View {
         VStack(alignment: .leading, spacing: CardMetrics.gutter) {
@@ -145,7 +197,7 @@ struct MenuView: View {
             }
 
             if let err = state.claudeError {
-                Text(err).font(.system(size: 10)).foregroundStyle(Color.claudeAccent)
+                claudeErrorRow(err)
             }
 
             if state.claudeShowGraph {
@@ -162,6 +214,35 @@ struct MenuView: View {
         }
     }
 
+    // A Claude error is usually just a status line. When it is one sign-in can fix,
+    // it becomes the button that fixes it — same position, same size, so nothing in
+    // the card moves; only the affordance changes.
+    @ViewBuilder
+    private func claudeErrorRow(_ err: String) -> some View {
+        if ClaudeScanner.requiresSignIn(err) {
+            Button(action: onClaudeSignIn) {
+                HStack(spacing: 3) {
+                    Text(err)
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.claudeAccent)
+                // Underline is the only thing marking this as actionable at 10 pt —
+                // the accent colour alone is already used for plain error text.
+                .underline()
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { inside in
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+            .help("Sign in to Claude")
+        } else {
+            Text(err).font(.system(size: 10)).foregroundStyle(Color.claudeAccent)
+        }
+    }
+
     private var deepseekSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -171,25 +252,8 @@ struct MenuView: View {
                 Spacer()
             }
 
-            if let balance = state.deepseekDisplayBalance {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Balance Left")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Text(balanceDisplay(balance, currency: state.deepseekDisplayCurrency))
-                        .font(.system(size: 18, weight: .bold, design: .monospaced))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: CardMetrics.panelRadius, style: .circular)
-                        .fill(Color.primary.opacity(0.045))
-                )
-            }
-
+            // The status line sits under the header rather than between panels: once
+            // the panels are user-ordered there is no "between" that stays meaningful.
             if let err = state.deepseekError {
                 Text(err).font(.system(size: 10)).foregroundStyle(Color.deepseekAccent)
             } else if !state.deepseekAvailable {
@@ -198,6 +262,24 @@ struct MenuView: View {
                     .foregroundStyle(.secondary)
             }
 
+            ForEach(state.deepseekPanelOrder, id: \.self) { panel in
+                deepseekPanel(panel)
+            }
+        }
+    }
+
+    /// One panel of the DeepSeek card, addressed by the id stored in
+    /// `deepseekPanelOrder`. Each keeps its own visibility rule, so reordering never
+    /// makes a hidden panel appear.
+    @ViewBuilder
+    private func deepseekPanel(_ id: String) -> some View {
+        switch id {
+        case "billing":
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                deepseekBillingPanel(at: context.date)
+            }
+
+        case "graph":
             if state.deepseekAvailable && state.deepseekShowGraph {
                 UsageGraphView(
                     history: state.deepseekHistory.mapValues { $0 * 2_000_000.0 },
@@ -207,9 +289,65 @@ struct MenuView: View {
                     showTotal: true,
                     firstDayOfWeek: state.firstDayOfWeek
                 )
-                .padding(.top, 4)
             }
+
+        case "balance":
+            if let balance = state.deepseekDisplayBalance {
+                // Single row: label left, figure right. Mirrors the graph card's
+                // "7-Day Usage / total" header so the two panels read as a pair.
+                HStack(spacing: 8) {
+                    Text("Balance Left")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Text(balanceDisplay(balance, currency: state.deepseekDisplayCurrency))
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: CardMetrics.panelRadius, style: .circular)
+                        .fill(Color.primary.opacity(0.045))
+                )
+            }
+
+        default:
+            EmptyView()
         }
+    }
+
+    private func deepseekBillingPanel(at date: Date) -> some View {
+        let status = DeepSeekPricing.status(at: date)
+
+        return HStack(spacing: 8) {
+            Circle()
+                .fill(status.period == .peak ? Color.orange : Color.green)
+                .frame(width: 7, height: 7)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(status.period.rawValue)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(status.period.detail)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text("until \(deepseekBillingChangeText(status.nextTransition, relativeTo: date))")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: CardMetrics.panelRadius, style: .circular)
+                .fill(Color.primary.opacity(0.045))
+        )
     }
 
     // Header already reads "Antigravity", so drop a redundant prefix from the
@@ -552,6 +690,12 @@ struct MenuView: View {
         let displayFraction = state.showRemaining ? (1.0 - fraction) : fraction
         let displayPercent = state.showRemaining ? (100.0 - percent) : percent
         let suffix = state.showRemaining ? "left" : "used"
+        // Antigravity anchors each bucket to its FIRST use. Until that happens it
+        // keeps re-reporting "now + window" on every poll, so the countdown never
+        // counts down — a session that reads 4 hr 59 min forever. Nothing consumed
+        // means nothing started, so the reset side of the row stays empty rather than
+        // showing a clock that isn't real.
+        let started = percent > 0
 
         return VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -561,7 +705,7 @@ struct MenuView: View {
             usageFooterRow(
                 displayPercent: displayPercent,
                 suffix: suffix,
-                reset: reset,
+                reset: started ? reset : nil,
                 compact: state.antigravitySideBySide,
                 isSession: title == "Session"
             )
@@ -736,39 +880,127 @@ struct MenuView: View {
         }
     }
 
-    private var footerButtons: some View {
-        HStack(spacing: 4) {
-            footerButton("arrow.clockwise", "Refresh") {
-                Task { await onRefresh(true) }
+    // MARK: - Header
+
+    private var header: some View {
+        HStack(spacing: 11) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("TokenBar")
+                    .font(.system(size: 14, weight: .semibold))
+
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                    Text(statusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
             }
-            footerButton("gearshape", "Settings") {
-                onSettings()
-            }
-            footerButton("power", "Quit") {
-                NSApp.terminate(nil)
+
+            Spacer(minLength: 12)
+
+            // Re-read on a timer so "2 min ago" ages while the menu stays open —
+            // the menu can sit open far longer than the poll interval.
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(lastRefreshText(at: context.date))
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    Text("last refresh")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
-        .padding(CardMetrics.footerInset)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: CardMetrics.cardRadius, style: .circular)
-                .fill(Color.primary.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: CardMetrics.cardRadius, style: .circular)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-        )
+        // Deliberately not a card, like the footer: the identity row is chrome, not
+        // content. It keeps the cards' horizontal inset so the title lines up with the
+        // card contents below it, and sits on the glass with no fill.
+        .padding(.horizontal, CardMetrics.cardPaddingH)
+        .padding(.vertical, CardMetrics.footerInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func footerButton(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                Text(title)
+    /// Live when at least one provider the user actually enabled is answering.
+    /// Losing the network takes every scanner down at once, so this reads as
+    /// Inactive without needing a reachability check of its own.
+    private var anyProviderLive: Bool {
+        (state.claudeEnabled && state.claudeAvailable)
+            || (state.deepseekEnabled && state.deepseekAvailable)
+            || (state.antigravityEnabled && state.antigravityAvailable)
+            || (state.geminiEnabled && state.geminiAvailable)
+            || (state.codexEnabled && state.codexAvailable)
+    }
+
+    private var noProvidersEnabled: Bool {
+        !state.claudeEnabled && !state.deepseekEnabled && !state.antigravityEnabled
+            && !state.geminiEnabled && !state.codexEnabled
+    }
+
+    private var statusText: String {
+        if noProvidersEnabled { return "No providers" }
+        // Only call it Connecting before the first answer. After that a refresh in
+        // flight shouldn't wipe out a status the user can still see data behind.
+        if state.isLoading && state.lastRefreshed == nil { return "Connecting…" }
+        return anyProviderLive ? "Active" : "Inactive"
+    }
+
+    private var statusColor: Color {
+        if noProvidersEnabled { return .secondary }
+        if state.isLoading && state.lastRefreshed == nil { return .orange }
+        return anyProviderLive ? .green : .red
+    }
+
+    private func lastRefreshText(at now: Date) -> String {
+        guard let date = state.lastRefreshed else { return "never" }
+        let seconds = max(0, now.timeIntervalSince(date))
+        if seconds < 45 { return "just now" }
+        if seconds < 3600 { return "\(Int((seconds / 60).rounded())) min ago" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600)) hr ago" }
+        return "\(Int(seconds / 86_400)) d ago"
+    }
+
+    private var footerButtons: some View {
+        // No Refresh button: every setting that affects the data already refreshes on
+        // change, the poll runs on its own cadence, and opening the menu tops up a
+        // stale reading — so the button only ever repeated work that had just happened.
+        HStack(spacing: 4) {
+            earlyResetNotice
+
+            Spacer(minLength: 9)
+
+            Button {
+                onSettings()
+            } label: {
+                Image(systemName: "gearshape")
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Settings")
+            .accessibilityLabel("Settings")
+
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Quit TokenBar")
+            .accessibilityLabel("Quit TokenBar")
         }
-        .buttonStyle(FooterButtonStyle())
+        .font(.system(size: 11, weight: .medium))
+        // Deliberately not a card: the footer is chrome, not content. It keeps the
+        // cards' horizontal inset so the icons line up with the content above them,
+        // but sits directly on the popover's glass with no fill or stroke.
+        // Same footer as GhostTyper's menu — shared by copy, not by module.
+        .padding(.horizontal, CardMetrics.cardPaddingH)
+        .padding(.vertical, CardMetrics.footerInset)
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Formatters
@@ -812,6 +1044,14 @@ struct MenuView: View {
             return String(format: "%@%.4f", symbol, money)
         }
         return String(format: "%@%.2f", symbol, money)
+    }
+
+    private func deepseekBillingChangeText(_ date: Date, relativeTo now: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = .current
+        formatter.dateFormat = Calendar.current.isDate(date, inSameDayAs: now) ? "HH:mm" : "E HH:mm"
+        return formatter.string(from: date)
     }
 
     private func resetText(_ date: Date?, compact: Bool, showDuration: Bool = false) -> String? {
@@ -949,30 +1189,3 @@ extension Color {
     static let codexAccent = Color(red: 142 / 255.0, green: 142 / 255.0, blue: 147 / 255.0)
 }
 
-struct FooterButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        FooterButtonLabel(configuration: configuration)
-    }
-
-    // Hover state needs real View storage; a ButtonStyle struct is recreated on
-    // every render, so @State directly on it would reset.
-    private struct FooterButtonLabel: View {
-        let configuration: Configuration
-        @State private var hovering = false
-
-        var body: some View {
-            configuration.label
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.primary)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: CardMetrics.footerButtonRadius, style: .circular)
-                        .fill(configuration.isPressed
-                              ? Color.primary.opacity(0.12)
-                              : (hovering ? Color.primary.opacity(0.06) : Color.clear))
-                )
-                .contentShape(RoundedRectangle(cornerRadius: CardMetrics.footerButtonRadius, style: .circular))
-                .onHover { hovering = $0 }
-        }
-    }
-}

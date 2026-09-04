@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Flat, near-black tile with a deliberately quiet edge. -->
+  <path
+    d="M320 72H704C859 72 952 165 952 320V704C952 859 859 952 704 952H320C165 952 72 859 72 704V320C72 165 165 72 320 72Z"
+    fill="#090A0C"
+    stroke="#20242A"
+    stroke-width="4"
+  />
+
+  <!-- One bold track replaces the previous pair of hairline rings. -->
+  <circle
+    cx="512"
+    cy="512"
+    r="270"
+    fill="none"
+    stroke="#343941"
+    stroke-width="38"
+  />
+
+  <!-- The active segment shows exactly three quarters of the ring. -->
+  <circle
+    cx="512"
+    cy="512"
+    r="270"
+    fill="none"
+    stroke="#F5F6F7"
+    stroke-width="48"
+    stroke-linecap="round"
+    stroke-dasharray="1272.35 424.11"
+    transform="rotate(-90 512 512)"
+  />
+</svg>

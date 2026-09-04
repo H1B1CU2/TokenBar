@@ -20,7 +20,19 @@ enum IconRenderer {
 
     // Shown in the menu bar when neither provider's cell is visible.
     private static func brainIcon(isReducing: Bool = false) -> NSImage {
-        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+        // SF Symbol "brain" has an unusually tall bounding box for its point size: at
+        // pointSize 16 it rendered ~17.5 pt tall, towering over the neighbours.
+        //
+        // The opposite mistake is matching wifi's 12 pt height: wifi is 16.5 pt wide and the
+        // eye reads optical size as area, so a narrower glyph at the same height looks
+        // smaller. Control Center's 13.5 pt square is the honest anchor.
+        //
+        // The rendered size quantises to whole points, so it does not track point size
+        // smoothly: 12 pt gives 16 × 13, 12.5 gives 17 × 14, 13 gives 17 × 15, and 13.25
+        // jumps to 18 × 15. 13 sits a step above Control Center's 13.5 pt square, which is
+        // where this reads as an equal rather than a smaller guest. Measure before changing
+        // this number — the steps are not where you would guess.
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
         guard let baseImg = NSImage(systemSymbolName: "brain", accessibilityDescription: "TokenBar")?
             .withSymbolConfiguration(config) else {
             let fallback = NSImage(size: NSSize(width: canvasH, height: canvasH))
@@ -34,8 +46,10 @@ enum IconRenderer {
         }
         
         let baseSize = baseImg.size
-        let dotRadius: CGFloat = 2.5
-        let extraWidth: CGFloat = 3
+        // Kept proportional to the glyph (dot ≈ 0.29 × icon height, gutter ≈ 0.19 ×) so the
+        // reducing badge tracks the brain's size rather than dwarfing it.
+        let dotRadius: CGFloat = 2.1
+        let extraWidth: CGFloat = 2.9
         let newSize = NSSize(width: baseSize.width + extraWidth, height: baseSize.height)
         
         let newImg = NSImage(size: newSize, flipped: false) { rect in

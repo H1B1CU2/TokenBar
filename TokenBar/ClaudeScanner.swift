@@ -73,6 +73,18 @@ struct ClaudeUsage {
 }
 
 enum ClaudeScanner {
+    // The two states the user can actually fix, and the wording that says so. The
+    // menu turns an error carrying this suffix into a button that starts the OAuth
+    // flow — see `requiresSignIn` — so the copy and the affordance can't drift apart.
+    static let signInSuffix = "click to sign in"
+    static let notSignedInError = "Not signed in — \(signInSuffix)"
+    static let loginExpiredError = "Login expired — \(signInSuffix)"
+
+    /// True when this error is one the sign-in flow can clear.
+    static func requiresSignIn(_ error: String?) -> Bool {
+        error?.hasSuffix(signInSuffix) ?? false
+    }
+
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
     private static let tokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
     private static let betaHeader = "oauth-2025-04-20"
@@ -98,7 +110,7 @@ enum ClaudeScanner {
     private static func scanUsage() async -> ClaudeUsage {
         guard var creds = readCredentials() else {
             return ClaudeUsage(available: false,
-                               error: "Not signed in — sign in from Settings")
+                               error: notSignedInError)
         }
 
         // Proactively refresh an expired (or about-to-expire) token before calling
@@ -112,7 +124,7 @@ enum ClaudeScanner {
                 didRefresh = true
             case .revoked:
                 return ClaudeUsage(available: false,
-                                   error: "Login expired — sign in from Settings")
+                                   error: loginExpiredError)
             case .temporary(let retry):
                 // Couldn't refresh right now (endpoint rate-limited / offline) — keep
                 // the last good usage on screen and try again shortly.
@@ -133,7 +145,7 @@ enum ClaudeScanner {
                 (usage, unauthorized) = await fetchUsage(token: updated.accessToken)
             case .revoked:
                 return ClaudeUsage(available: false,
-                                   error: "Login expired — sign in from Settings")
+                                   error: loginExpiredError)
             case .temporary(let retry):
                 return ClaudeUsage(available: false, transient: true,
                                    retryAfter: retry, error: "Rate limited by Anthropic")
@@ -432,7 +444,7 @@ enum ClaudeScanner {
                 return (parse(data), false)
             case 401:
                 return (ClaudeUsage(available: false,
-                                    error: "Login expired — sign in from Settings"), true)
+                                    error: loginExpiredError), true)
             case 429:
                 // Rate limited. Transient → keep showing the last good usage; pass
                 // Retry-After up so the caller can back off instead of hammering.

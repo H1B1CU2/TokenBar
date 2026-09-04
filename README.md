@@ -30,7 +30,7 @@ Modern development increasingly runs on metered AI services, yet usage and balan
 ### Multi-Provider Tracking
 - **Claude (Anthropic API):** Monitor official session and weekly utilization limits, with your active quota window presented in a metrics card. Also tracks **Latest Threads** from local Claude Code session files with real-time status indicators (e.g., coding, done, idle).
 - **Codex:** Summarize local Codex thread token usage for today and the last 7 days. Also monitors your **Latest Threads** read from your local Codex database with status indicators.
-- **DeepSeek:** Track your platform API balance (USD/CNY) in a clean, centered layout — with optional live conversion to Thai Baht (฿) using European Central Bank reference rates via the Frankfurter API.
+- **DeepSeek:** Track your platform API balance (USD/CNY), see the live Peak or Off-Peak billing period and next rate change, and reference current V4 Flash/Pro pricing — with optional live conversion to Thai Baht (฿) using European Central Bank reference rates via the Frankfurter API.
 - **Antigravity:** Follow remaining quotas and reset times across Gemini, Claude, and GPT models.
 
 ### Latest Threads Tracking
@@ -92,7 +92,7 @@ Modern development increasingly runs on metered AI services, yet usage and balan
 TokenBar reads your official Claude usage through your Claude Code access token, resolved automatically from the macOS Keychain or your local credentials file. The token is refreshed transparently as needed — no manual setup required.
 
 ### DeepSeek
-Enter your DeepSeek API key (`sk-...`) in the **DeepSeek** tab of Settings. Your balance can optionally be converted to Thai Baht (฿) using live reference rates.
+Enter your DeepSeek API key (`sk-...`) in the **DeepSeek** tab of Settings. Your balance can optionally be converted to Thai Baht (฿) using live reference rates. TokenBar also shows DeepSeek's current Peak/Off-Peak billing period, next local-time transition, and the official V4 Flash/Pro input and output rates per million tokens.
 
 ### Antigravity
 Connects to your local Antigravity instance on its default ports to query session and weekly limits for Gemini, Claude, and GPT models.

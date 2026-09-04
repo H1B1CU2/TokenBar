@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ServiceManagement
 import UniformTypeIdentifiers
 
 enum SettingsTab: String, CaseIterable, Identifiable {
@@ -48,11 +49,21 @@ struct GlassEffectBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSGlassEffectView {
         let view = NSGlassEffectView()
         view.cornerRadius = cornerRadius
+        view.style = Self.systemStyle
         return view
     }
 
     func updateNSView(_ nsView: NSGlassEffectView, context: Context) {
         nsView.cornerRadius = cornerRadius
+        nsView.style = Self.systemStyle
+    }
+
+    /// System Settings ▸ Appearance ▸ "Allow wallpaper tinting in windows"
+    /// (off ⇒ AppleReduceDesktopTinting) is what picks between the Clear and
+    /// Tinted glass styles. There is no public change notification for it, so it
+    /// is re-read on every SwiftUI update rather than cached.
+    private static var systemStyle: NSGlassEffectView.Style {
+        UserDefaults.standard.bool(forKey: "AppleReduceDesktopTinting") ? .clear : .regular
     }
 }
 
@@ -82,9 +93,17 @@ struct SettingsView: View {
 
     @State private var selectedTab: SettingsTab = .general
     @State private var draggedProvider: String? = nil
+    @State private var draggedDeepseekPanel: String? = nil
+    @State private var openAtLogin = LoginItem.isEnabled
+    @State private var loginItemError: String?
+
+    @Environment(\.colorScheme) private var colorScheme
 
     private var cardFillColor: Color { Color(NSColor.windowBackgroundColor) }
-    private var hairlineBorderColor: Color { Color.white.opacity(0.12) }
+    // The system's own hairline, not a fixed white scrim. A white border is
+    // invisible against the light card fill, which is what kept this window
+    // pinned to dark; separatorColor tracks the theme instead.
+    private var hairlineBorderColor: Color { Color(nsColor: .separatorColor) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -126,7 +145,9 @@ struct SettingsView: View {
                 GlassEffectBackground(cornerRadius: SettingsLayout.windowCornerRadius)
             } else {
                 VisualEffectView(material: .sidebar, blendingMode: .behindWindow)
-                    .overlay(Color.black.opacity(0.10))
+                    // Depth scrim for the pre-26 material only, and only in dark
+                    // chrome — in light mode it just greys the sidebar out.
+                    .overlay(colorScheme == .dark ? Color.black.opacity(0.10) : Color.clear)
             }
         }
         .frame(minWidth: 760, idealWidth: 1_040, minHeight: 560, idealHeight: 720)
@@ -212,6 +233,7 @@ struct SettingsView: View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: SettingsLayout.cardSpacing) {
                 VStack(spacing: SettingsLayout.cardSpacing) {
+                    startupSettingsCard
                     displaySettingsCard
                     notificationSettingsCard
                 }
@@ -226,12 +248,51 @@ struct SettingsView: View {
             .frame(minWidth: 680)
 
             VStack(spacing: SettingsLayout.cardSpacing) {
+                startupSettingsCard
                 displaySettingsCard
                 notificationSettingsCard
                 scheduleSettingsCard
                 providerOrderCard
             }
         }
+    }
+
+    private var startupSettingsCard: some View {
+        settingsCard(icon: "power", title: "Startup") {
+            settingToggle("Open at Login",
+                          "Start TokenBar automatically when you log in.",
+                          isOn: openAtLoginBinding)
+
+            if let loginItemError {
+                Text(loginItemError)
+                    .font(.caption2)
+                    .foregroundStyle(Color.claudeAccent)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        // The switch mirrors macOS's own Login Items list, which the user can change
+        // behind our back (System Settings ▸ General ▸ Login Items). Re-read whenever
+        // the window comes back rather than trusting a cached value.
+        .onAppear { openAtLogin = LoginItem.isEnabled }
+    }
+
+    /// Writes through to `SMAppService` and reports back what actually happened —
+    /// registration can fail (an unsigned build, an app outside /Applications), and
+    /// a switch that silently springs back is worse than one that says why.
+    private var openAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { openAtLogin },
+            set: { wanted in
+                do {
+                    try LoginItem.set(wanted)
+                    openAtLogin = LoginItem.isEnabled
+                    loginItemError = nil
+                } catch {
+                    openAtLogin = LoginItem.isEnabled
+                    loginItemError = "Couldn't change the login item: \(error.localizedDescription)"
+                }
+            }
+        )
     }
 
     private var displaySettingsCard: some View {
@@ -265,6 +326,10 @@ struct SettingsView: View {
             if state.lowLimitNotificationsEnabled {
                 lowLimitThresholdControl
             }
+            Divider()
+            settingToggle("Early Reset Notifications",
+                          "Notify when a weekly limit resets ahead of its announced time. The popover banner shows regardless.",
+                          isOn: $state.earlyResetNotificationsEnabled)
         }
     }
 
@@ -645,7 +710,11 @@ struct SettingsView: View {
                     
                     Toggle("Show usage graph", isOn: $state.deepseekShowGraph)
                         .font(.system(size: 12))
-                    
+
+                    deepseekPanelOrderPanel
+
+                    deepseekPricingPanel
+
                     VStack(alignment: .leading, spacing: 6) {
                         Text("API Key")
                             .font(.system(size: 11, weight: .medium))
@@ -676,6 +745,164 @@ struct SettingsView: View {
             }
         }
         .settingsCardStyle()
+    }
+
+    // Reorders the panels *inside* the DeepSeek card — the provider-order list above
+    // moves whole providers, this moves Billing / 7-Day Usage / Balance within one.
+    // Same drag mechanics and the same drop delegate, so the two feel identical.
+    private var deepseekPanelOrderPanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Card Order")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            ForEach(state.deepseekPanelOrder, id: \.self) { panel in
+                HStack(spacing: 10) {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    Image(systemName: deepseekPanelIcon(panel))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                    Text(deepseekPanelName(panel))
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer(minLength: 12)
+                }
+                .padding(.horizontal, 11)
+                .frame(height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.secondary.opacity(0.08))
+                )
+                .opacity(draggedDeepseekPanel == panel ? 0.5 : 1.0)
+                .onDrag {
+                    draggedDeepseekPanel = panel
+                    return NSItemProvider(object: panel as NSString)
+                }
+                .onDrop(of: [.text], delegate: ProviderDropDelegate(
+                    item: panel,
+                    order: $state.deepseekPanelOrder,
+                    draggedItem: $draggedDeepseekPanel
+                ))
+            }
+
+            Text("Drag to reorder the panels inside the DeepSeek card. A panel you have turned off keeps its place and reappears where you left it.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func deepseekPanelName(_ id: String) -> String {
+        switch id {
+        case "billing": return "Billing Period"
+        case "graph": return "7-Day Usage"
+        case "balance": return "Balance Left"
+        default: return id
+        }
+    }
+
+    private func deepseekPanelIcon(_ id: String) -> String {
+        switch id {
+        case "billing": return "clock"
+        case "graph": return "chart.bar"
+        case "balance": return "creditcard"
+        default: return "square"
+        }
+    }
+
+    private var deepseekPricingPanel: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let status = DeepSeekPricing.status(at: context.date)
+            let flashOffPeak = DeepSeekPricing.rates(for: .flash, period: .offPeak)
+            let flashPeak = DeepSeekPricing.rates(for: .flash, period: .peak)
+            let proOffPeak = DeepSeekPricing.rates(for: .pro, period: .offPeak)
+            let proPeak = DeepSeekPricing.rates(for: .pro, period: .peak)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(status.period == .peak ? Color.orange : Color.green)
+                        .frame(width: 7, height: 7)
+                    Text("Current billing: \(status.period.rawValue)")
+                        .font(.system(size: 11, weight: .semibold))
+                    Spacer()
+                    Text("changes \(deepseekPricingChangeText(status.nextTransition, relativeTo: context.date))")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 7) {
+                    GridRow {
+                        Text("USD / 1M tokens")
+                        deepseekPricingHeader("V4 Flash")
+                        deepseekPricingHeader("V4 Pro")
+                    }
+
+                    GridRow {
+                        Text("Input · cache hit")
+                            .foregroundStyle(.secondary)
+                        deepseekRatePair(offPeak: flashOffPeak.cacheHitInput, peak: flashPeak.cacheHitInput)
+                        deepseekRatePair(offPeak: proOffPeak.cacheHitInput, peak: proPeak.cacheHitInput)
+                    }
+
+                    GridRow {
+                        Text("Input · cache miss")
+                            .foregroundStyle(.secondary)
+                        deepseekRatePair(offPeak: flashOffPeak.cacheMissInput, peak: flashPeak.cacheMissInput)
+                        deepseekRatePair(offPeak: proOffPeak.cacheMissInput, peak: proPeak.cacheMissInput)
+                    }
+
+                    GridRow {
+                        Text("Output")
+                            .foregroundStyle(.secondary)
+                        deepseekRatePair(offPeak: flashOffPeak.output, peak: flashPeak.output)
+                        deepseekRatePair(offPeak: proOffPeak.output, peak: proPeak.output)
+                    }
+                }
+                .font(.system(size: 10))
+
+                Text("Rates are shown Off-Peak / Peak. Peak: Monday–Friday, 01:00–04:00 and 06:00–10:00 UTC.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.primary.opacity(0.04))
+            )
+        }
+    }
+
+    private func deepseekPricingHeader(_ title: String) -> some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            Text(title)
+                .fontWeight(.semibold)
+            Text("Off / Peak")
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private func deepseekRatePair(offPeak: Double, peak: Double) -> some View {
+        Text("\(deepseekPriceText(offPeak)) / \(deepseekPriceText(peak))")
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private func deepseekPriceText(_ value: Double) -> String {
+        value < 0.1 ? String(format: "$%.3f", value) : String(format: "$%.2f", value)
+    }
+
+    private func deepseekPricingChangeText(_ date: Date, relativeTo now: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = .current
+        formatter.dateFormat = Calendar.current.isDate(date, inSameDayAs: now) ? "HH:mm" : "E HH:mm"
+        return formatter.string(from: date)
     }
     
     private var antigravityCard: some View {
@@ -1354,9 +1581,137 @@ extension View {
             .onChange(of: state.lowLimitNotificationsEnabled) { onLiveChange() }
             .onChange(of: state.lowLimitThresholdPercent) { onLiveChange() }
             .onChange(of: state.useSeparateGraphScale) { onLiveChange() }
-            .onChange(of: state.providerOrder) { onLiveChange() }
+            // Deliberately no observer for providerOrder / deepseekPanelOrder: the menu
+            // reads them straight off the observable state, and running the live-apply
+            // path (icon redraw + timer restart + notification reconcile + a network
+            // refresh) on every hover step of a drag is what made reordering feel laggy.
             .onChange(of: state.refreshInterval) { onLiveChange() }
             .onChange(of: state.idlePollRate) { onLiveChange() }
             .onChange(of: state.firstDayOfWeek) { onLiveChange() }
+    }
+}
+
+// ===========================================================================
+// Claude sign-in
+//
+// Reached from the menu's "Login expired — click to sign in" row, not from
+// Settings: the point of failure is where the fix belongs.
+//
+// The flow is Claude Code's own OAuth 2.0 + PKCE. The authorize page redirects
+// to a console callback that prints "code#state" rather than deep-linking back
+// into an app, so the last step is a paste — there is no callback for TokenBar
+// to catch. It lives in a real window rather than inside the menu because the
+// user has to leave for a browser in the middle of it, and the menu panel
+// closes the moment focus goes elsewhere.
+// ===========================================================================
+
+struct ClaudeSignInView: View {
+    let challenge: ClaudeScanner.LoginChallenge
+    /// Called after credentials are written, so the caller can refresh and close.
+    let onSuccess: () -> Void
+    let onCancel: () -> Void
+
+    @State private var code = ""
+    @State private var error: String?
+    @State private var working = false
+
+    private var trimmedCode: String {
+        code.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                ProviderIcon(provider: "claude", size: 22)
+                Text("Sign in to Claude")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("1.  Approve access in the browser window that just opened.")
+                Text("2.  Copy the code the page shows you and paste it below.")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            TextField("code#state", text: $code)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+                .disabled(working)
+                .onSubmit { submit() }
+
+            if let error {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.claudeAccent)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 8) {
+                Button("Open Browser Again") {
+                    NSWorkspace.shared.open(challenge.url)
+                }
+                .disabled(working)
+
+                Spacer()
+
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+
+                Button(working ? "Signing In…" : "Sign In", action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(working || trimmedCode.isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private func submit() {
+        let value = trimmedCode
+        guard !value.isEmpty, !working else { return }
+        working = true
+        error = nil
+        Task {
+            // completeLogin writes the Keychain itself and returns nil on success,
+            // or a message already worded for the user.
+            let failure = await ClaudeScanner.completeLogin(rawCode: value,
+                                                            verifier: challenge.verifier,
+                                                            state: challenge.state)
+            await MainActor.run {
+                working = false
+                if let failure {
+                    error = failure
+                } else {
+                    onSuccess()
+                }
+            }
+        }
+    }
+}
+
+
+// ===========================================================================
+// Login item
+//
+// SMAppService is the only supported way to do this since macOS 13 — the old
+// LSSharedFileList / login-item helper approaches are gone. The service is keyed
+// by the app's bundle identity and location, so a build running from DerivedData
+// registers *that* copy; the one in /Applications has to be registered from
+// itself.
+// ===========================================================================
+
+enum LoginItem {
+    static var isEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
+
+    static func set(_ enabled: Bool) throws {
+        if enabled {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
+        }
     }
 }
